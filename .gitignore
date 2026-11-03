@@ -1,0 +1,5 @@
+/target
+/data/*.pgn
+!/data/sample_synthetic.pgn
+/reports
+__pycache__/
