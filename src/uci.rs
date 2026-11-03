@@ -24,6 +24,7 @@ pub struct Engine {
     pub seed: u64,
     pub show_thoughts: bool,
     pub raw_skill: bool,
+    pub tc_scale: f32,
     game_salt: u64,
 }
 
@@ -39,6 +40,7 @@ impl Engine {
             seed: 0,
             show_thoughts: true,
             raw_skill: false,
+            tc_scale: 1.0,
             game_salt: salt,
         }
     }
@@ -109,6 +111,7 @@ impl Engine {
         }
         let seed = if self.seed != 0 { self.seed } else { self.game_salt } ^ self.board.hash;
         let mut mind = Mind::new(if self.raw_skill { Persona::from_internal(self.elo, self.elo) } else { Persona::from_elo(self.elo) }, seed, &mut self.searcher);
+        mind.tc_scale = self.tc_scale;
         let t = mind.think(&self.board, &limits);
         if self.show_thoughts {
             for line in &t.trace {
@@ -133,6 +136,14 @@ impl Engine {
             "uci_elo" => self.elo = value.parse().unwrap_or(self.elo),
             "seed" => self.seed = value.parse().unwrap_or(0),
             "showthoughts" => self.show_thoughts = value == "true",
+            // "base+inc" in seconds, as in PGN TimeControl: scales simulated think time.
+            "simtimecontrol" => {
+                let mut it = value.split('+').map(|x| x.trim().parse::<f32>().unwrap_or(0.0));
+                let (base, inc) = (it.next().unwrap_or(300.0), it.next().unwrap_or(0.0));
+                if base + inc > 0.0 {
+                    self.tc_scale = (base + 40.0 * inc) / 300.0;
+                }
+            }
             "rawskill" => self.raw_skill = value == "true",
             "bookfile" => crate::mind::book::init(&value),
             "hash" => self.searcher = Searcher::new(value.parse().unwrap_or(32)),
@@ -154,6 +165,7 @@ impl Engine {
                     println!("option name UCI_Elo type spin default 1500 min 100 max 3200");
                     println!("option name Seed type spin default 0 min 0 max 2147483647");
                     println!("option name ShowThoughts type check default true");
+                    println!("option name SimTimeControl type string default 300+0");
                     println!("option name RawSkill type check default false");
                     println!("option name BookFile type string default data/book.tsv");
                     println!("option name Hash type spin default 32 min 1 max 4096");

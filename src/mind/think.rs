@@ -37,12 +37,14 @@ pub struct Mind<'a> {
     seed: u64,
     nodes: u32,
     budget: u32,
+    /// Time-control scale for simulated think time (1.0 = 5-minute game).
+    pub tc_scale: f32,
     searcher: &'a mut Searcher,
 }
 
 impl<'a> Mind<'a> {
     pub fn new(persona: Persona, seed: u64, searcher: &'a mut Searcher) -> Mind<'a> {
-        Mind { persona, rng: Rng::new(seed), seed, nodes: 0, budget: 0, searcher }
+        Mind { persona, rng: Rng::new(seed), seed, nodes: 0, budget: 0, tc_scale: 1.0, searcher }
     }
 
     /// How the position "feels" to this player, from the side to move's view.
@@ -215,7 +217,7 @@ impl<'a> Mind<'a> {
         if let Some(book) = super::book::get() {
             if let Some((m, seen)) = book.pick(b, p.elo, &mut self.rng) {
                 if legal.contains(&m) {
-                    let ms = ((0.3 + 2.5 * self.rng.f32().powi(2)) * 1000.0 / (1.0 + seen / 200.0).sqrt()) as u64;
+                    let ms = ((0.3 + 2.5 * self.rng.f32().powi(2)) * 1000.0 * self.tc_scale.clamp(0.1, 20.0).sqrt() / (1.0 + seen / 200.0).sqrt()) as u64;
                     trace.push(format!("I know this position; {} is what I usually play.", san(b, m)));
                     return Thought { best: m, think_ms: ms.max(120), trace, candidates: vec![], nodes: 0, resign: false };
                 }
@@ -393,19 +395,23 @@ impl<'a> Mind<'a> {
         self.calculate(b, depth, -INF, INF, forgotten, line, 1)
     }
 
-    /// Placeholder think-time model (fitted on Lichess clocks in P2): close
-    /// decisions and heavy calculation take longer; obvious moves are quick.
+    /// Simulated human think time. Obvious moves (one candidate far ahead,
+    /// typically recaptures and forced replies) come almost at once; close
+    /// decisions take longest. Scaled by the time control (`tc_scale`, 1.0 =
+    /// a 5-minute game) and log-normal like real move times.
     fn think_time(&mut self, cands: &[Candidate], noticed: usize) -> u64 {
         let p = self.persona.clone();
-        let effort = (self.nodes as f32 / p.node_budget.max(1) as f32).min(1.0);
         let gap = if cands.len() >= 2 { (cands[0].value - cands[1].value).abs() as f32 } else { 500.0 };
-        let closeness = (1.0 - gap / 150.0).clamp(0.0, 1.0);
-        let skill = (p.elo / 2000.0).clamp(0.2, 1.6);
-        // Obvious moves (one clear winner, little calculation) come almost instantly.
-        let base = 0.2 + skill * (12.0 * effort + 10.0 * closeness) + noticed as f32 * 0.03;
-        let jitter = (0.45 * self.rng.gauss()).exp(); // human move times are log-normal
-        let secs = base * jitter;
-        (secs.clamp(0.1, 120.0) * 1000.0) as u64
+        let tc = self.tc_scale.clamp(0.1, 20.0);
+        let secs = if gap >= 150.0 && self.rng.chance(0.8) {
+            0.45 * (0.5 * self.rng.gauss()).exp() * tc.sqrt()
+        } else {
+            let closeness = (1.0 - gap / 150.0).clamp(0.0, 1.0);
+            let effort = (self.nodes as f32 / p.node_budget.max(1) as f32).min(1.0);
+            let complexity = (noticed as f32 / 30.0).min(1.0);
+            (1.0 + 7.0 * closeness + 2.0 * effort + 3.0 * complexity) * tc * (0.6 * self.rng.gauss()).exp()
+        };
+        (secs.clamp(0.1, 600.0) * 1000.0) as u64
     }
 }
 

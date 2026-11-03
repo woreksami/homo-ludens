@@ -71,7 +71,7 @@ class Bot:
             self.engines[key] = e
         return self.engines[key]
 
-    def move(self, start_fen: str, moves: list[str], elo: int, seed: int) -> tuple[str, float | None, bool]:
+    def move(self, start_fen: str, moves: list[str], elo: int, seed: int, tc: str = "300+0") -> tuple[str, float | None, bool]:
         if self.kind == "maia":
             level = min(MAIA_LEVELS, key=lambda l: abs(l - elo))
             r = self._engine(level).play(start_fen, moves, go="nodes 1")
@@ -80,6 +80,7 @@ class Bot:
         if self.kind == "homo_ludens":
             e.set_option("UCI_Elo", elo)
             e.set_option("Seed", seed)
+            e.set_option("SimTimeControl", tc)
             r = e.play(start_fen, moves, go="movetime 200")
             return r.move, (r.think_ms or 0) / 1000, "resign" in r.trace
         r = e.play(start_fen, moves, go=f"movetime {self.args.engine_ms}")
@@ -112,7 +113,7 @@ def replay(human: chess.pgn.Game, bot: Bot, game_no: int) -> chess.pgn.Game:
         moves.append(m.uci())
         board.push(m)
     while not board.is_game_over(claim_draw=True) and board.ply() < 200:
-        uci, secs, resign = bot.move(start_fen, moves, elo[board.turn], seed=game_no * 1000 + board.ply())
+        uci, secs, resign = bot.move(start_fen, moves, elo[board.turn], seed=game_no * 1000 + board.ply(), tc=h.get("TimeControl", "300+0"))
         if resign:
             out.headers["Termination"] = "Normal"
             out.headers["Result"] = "0-1" if board.turn == chess.WHITE else "1-0"
