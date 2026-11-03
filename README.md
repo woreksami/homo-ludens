@@ -62,7 +62,7 @@ Play Na6 after about 3.2 s.
 | Search speed | ~640k nodes/s on one core (mailbox board, copy-make) |
 | Strength is monotonic in Elo | Yes. Persona matches: 1200 beat 600 19–1; 1800 beat 1200 16–4; 2400 beat 1800 16.5–3.5; 3000 beat 2400 10–0 |
 | Strength is calibrated | **No, not yet.** A nominal 600-Elo gap plays like ~500 Elo at the bottom and ~250 in the middle. Fitting the curves is P1–P2 work |
-| Human move-matching | **Not yet measured on human games.** The included `data/sample_synthetic.pgn` is persona-vs-persona games for pipeline testing only; its numbers mean nothing about humans |
+| Human move-matching | **28.8%** on 4,124 real Lichess positions (Jan 2013), vs Maia-1 50.7% and our own full-strength engine 38.5%. See `results/baseline_v0.md` |
 | 3000+ strength | **Not yet.** A 640k nps mailbox engine with this evaluation is likely in the 2200–2600 range against real engines; reaching 3000+ is P3 (bitboards, tuned eval) |
 
 ## Grading against real humans
@@ -79,9 +79,27 @@ baselines on identical positions. For absolute Elo calibration, play
 `selfplay`-style gauntlets against Stockfish at fixed `UCI_Elo` settings
 (e.g. with cutechess-cli).
 
+## Baseline v0 (real human games)
+
+`harness/compare.py` on 4,124 positions from the January 2013 Lichess database,
+stratified by rating, every model given the same game history:
+
+| Model | Move-matching |
+| --- | ---: |
+| Maia-1, rating-matched network (lc0, 1 node) | 50.7% |
+| Maia-1500 for everyone | 49.2% |
+| Homo Ludens engine at full strength, depth 6 | 38.5% |
+| Homo Ludens human mode, most frequent move over 8 seeds | 28.8% |
+| Homo Ludens human mode, one sampled move | 23.9% |
+
+Diagnosis: on captures the persona already beats its own engine (69% vs 63%;
+Maia 79%), but quiet moves are 67% of human moves and the persona matches only
+11% of them (engine 28%, Maia 39%). The unfitted priors (evaluation noise,
+intuition temperature, quiet-move perception) scatter quiet-move choices.
+
 ## Next steps (P1, from the blueprint)
 
-1. Run the harness on 5,000+ real Lichess positions and record the v0 baseline next to Maia.
+1. Fit the quiet-move parameters first (`eval_noise_cp`, `intuition_temp`, quiet perception) on `reports/baseline_v0_positions.csv`-style data; target: beat the 38.5% engine baseline.
 2. Mine the chunk/template library from Lichess games and replace the hand-written patterns.
 3. Fit persona curves by maximum likelihood on human moves, with the monotonicity constraint.
 4. Fit the think-time model on real `%clk` data (target Spearman ≥ 0.5).

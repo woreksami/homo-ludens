@@ -29,6 +29,8 @@ class Position:
     ply: int
     game_id: str
     time_control: str
+    start_fen: str = chess.STARTING_FEN
+    moves_before: tuple[str, ...] = ()
 
 
 def _clock(comment: str) -> float | None:
@@ -74,6 +76,8 @@ def iter_positions(
         inc = _increment(tc)
         gid = h.get("Site", "").rsplit("/", 1)[-1] or h.get("Event", "game")
         board = game.board()
+        start_fen = board.fen()
+        played: list[str] = []
         last_clock = {chess.WHITE: None, chess.BLACK: None}
         for ply, node in enumerate(game.mainline()):
             mover = board.turn
@@ -96,8 +100,11 @@ def iter_positions(
                     ply=ply,
                     game_id=gid,
                     time_control=tc,
+                    start_fen=start_fen,
+                    moves_before=tuple(played),
                 )
             last_clock[mover] = clk
+            played.append(node.move.uci())
             board.push(node.move)
 
 
