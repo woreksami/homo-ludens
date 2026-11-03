@@ -26,7 +26,7 @@ fn curve(elo: f32, values: [f32; 8]) -> f32 {
 /// centipawn loss and blunder rate per rating band). Re-fit after any change
 /// to the thinking stages.
 const CALIB_LABEL: [f32; 7] = [100.0, 600.0, 1000.0, 1500.0, 2000.0, 2500.0, 3200.0];
-const CALIB_INTERNAL: [f32; 7] = [600.0, 2300.0, 2650.0, 2740.0, 2860.0, 2950.0, 3200.0];
+const CALIB_INTERNAL: [f32; 7] = [600.0, 2340.0, 2690.0, 2780.0, 2890.0, 2970.0, 3200.0];
 
 pub fn calibrated(label: f32) -> f32 {
     let l = label.clamp(CALIB_LABEL[0], CALIB_LABEL[6]);
