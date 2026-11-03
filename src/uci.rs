@@ -23,6 +23,7 @@ pub struct Engine {
     pub elo: f32,
     pub seed: u64,
     pub show_thoughts: bool,
+    pub raw_skill: bool,
     game_salt: u64,
 }
 
@@ -37,6 +38,7 @@ impl Engine {
             elo: 1500.0,
             seed: 0,
             show_thoughts: true,
+            raw_skill: false,
             game_salt: salt,
         }
     }
@@ -106,7 +108,7 @@ impl Engine {
             return r.best;
         }
         let seed = if self.seed != 0 { self.seed } else { self.game_salt } ^ self.board.hash;
-        let mut mind = Mind::new(Persona::from_elo(self.elo), seed, &mut self.searcher);
+        let mut mind = Mind::new(if self.raw_skill { Persona::from_internal(self.elo, self.elo) } else { Persona::from_elo(self.elo) }, seed, &mut self.searcher);
         let t = mind.think(&self.board, &limits);
         if self.show_thoughts {
             for line in &t.trace {
@@ -114,6 +116,9 @@ impl Engine {
             }
         }
         println!("info string thinktime {}", t.think_ms);
+        if t.resign {
+            println!("info string resign");
+        }
         t.best
     }
 
@@ -128,6 +133,8 @@ impl Engine {
             "uci_elo" => self.elo = value.parse().unwrap_or(self.elo),
             "seed" => self.seed = value.parse().unwrap_or(0),
             "showthoughts" => self.show_thoughts = value == "true",
+            "rawskill" => self.raw_skill = value == "true",
+            "bookfile" => crate::mind::book::init(&value),
             "hash" => self.searcher = Searcher::new(value.parse().unwrap_or(32)),
             _ => println!("info string unknown option {name}"),
         }
@@ -147,6 +154,8 @@ impl Engine {
                     println!("option name UCI_Elo type spin default 1500 min 100 max 3200");
                     println!("option name Seed type spin default 0 min 0 max 2147483647");
                     println!("option name ShowThoughts type check default true");
+                    println!("option name RawSkill type check default false");
+                    println!("option name BookFile type string default data/book.tsv");
                     println!("option name Hash type spin default 32 min 1 max 4096");
                     println!("uciok");
                 }
@@ -162,6 +171,16 @@ impl Engine {
                     println!("bestmove {}", m.uci());
                 }
                 "d" => println!("{}", self.board),
+                // Non-standard: score every legal move, for fitting human models.
+                // `evalmoves [depth]` -> `evalmoves e2e4:31 d2d4:28 ...` (side to move's view, cp)
+                "evalmoves" => {
+                    let d = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
+                    self.searcher.set_game_history(self.history.clone());
+                    let moves = self.board.legal_moves();
+                    let scored = self.searcher.score_moves(&self.board, &moves, d, Some(200_000));
+                    let parts: Vec<String> = scored.iter().map(|(m, s)| format!("{}:{}", m.uci(), s)).collect();
+                    println!("evalmoves {}", parts.join(" "));
+                }
                 "perft" => {
                     let d = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(4);
                     let t = std::time::Instant::now();

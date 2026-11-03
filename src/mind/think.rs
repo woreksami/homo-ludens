@@ -27,6 +27,8 @@ pub struct Thought {
     pub trace: Vec<String>,
     pub candidates: Vec<Candidate>,
     pub nodes: u32,
+    /// The player gives up: the position has felt hopeless for long enough.
+    pub resign: bool,
 }
 
 pub struct Mind<'a> {
@@ -205,7 +207,19 @@ impl<'a> Mind<'a> {
         let legal = b.legal_moves();
         if legal.len() == 1 {
             trace.push(format!("Only one legal move: {}.", san(b, legal[0])));
-            return Thought { best: legal[0], think_ms: 400, trace, candidates: vec![], nodes: 0 };
+            let ms = (150.0 + 250.0 * self.rng.f32()) as u64;
+            return Thought { best: legal[0], think_ms: ms, trace, candidates: vec![], nodes: 0, resign: false };
+        }
+
+        // Stage 0: opening memory. Familiar positions are played from memory, fast.
+        if let Some(book) = super::book::get() {
+            if let Some((m, seen)) = book.pick(b, p.elo, &mut self.rng) {
+                if legal.contains(&m) {
+                    let ms = ((0.3 + 2.5 * self.rng.f32().powi(2)) * 1000.0 / (1.0 + seen / 200.0).sqrt()) as u64;
+                    trace.push(format!("I know this position; {} is what I usually play.", san(b, m)));
+                    return Thought { best: m, think_ms: ms.max(120), trace, candidates: vec![], nodes: 0, resign: false };
+                }
+            }
         }
 
         // Stage 1-2: perception.
@@ -333,7 +347,7 @@ impl<'a> Mind<'a> {
         }
 
         // Stage 6c: top settings: let a full search challenge the human choice.
-        if p.engine_weight > 0.0 || p.style_margin_cp > 0.0 {
+        if p.engine_weight > 0.0 {
             let lim = Limits {
                 depth: limits.depth.or(Some((6.0 + 14.0 * p.engine_weight) as u32)),
                 movetime_ms: limits.movetime_ms,
@@ -363,7 +377,16 @@ impl<'a> Mind<'a> {
         // Stage 7: decision and simulated think time.
         let think_ms = self.think_time(&cands, percepts.len());
         trace.push(format!("Play {} after about {:.1} s.", san(b, best), think_ms as f32 / 1000.0));
-        Thought { best, think_ms, trace, candidates: cands, nodes: self.nodes }
+        // Resignation: real Lichess players resign when clearly lost (median
+        // about -12 pawns, a quarter by -8); many play on to mate. Per-move
+        // hazard on how lost the position feels, calibrated on those games.
+        let hopeless = (-feel_now).max(-cands[0].value.max(-30000));
+        let hazard = 0.5 / (1.0 + (-((hopeless as f32) - 1100.0) / 150.0).exp());
+        let resign = hopeless > 600 && self.rng.chance(hazard);
+        if resign {
+            trace.push(format!("This is hopeless ({}). I resign.", fmt_cp(-hopeless)));
+        }
+        Thought { best, think_ms, trace, candidates: cands, nodes: self.nodes, resign }
     }
 
     fn calculate_outer(&mut self, b: &Board, depth: u32, forgotten: &mut Vec<u8>, line: &mut Vec<Move>) -> i32 {
@@ -372,14 +395,17 @@ impl<'a> Mind<'a> {
 
     /// Placeholder think-time model (fitted on Lichess clocks in P2): close
     /// decisions and heavy calculation take longer; obvious moves are quick.
-    fn think_time(&self, cands: &[Candidate], noticed: usize) -> u64 {
-        let p = &self.persona;
+    fn think_time(&mut self, cands: &[Candidate], noticed: usize) -> u64 {
+        let p = self.persona.clone();
         let effort = (self.nodes as f32 / p.node_budget.max(1) as f32).min(1.0);
         let gap = if cands.len() >= 2 { (cands[0].value - cands[1].value).abs() as f32 } else { 500.0 };
         let closeness = (1.0 - gap / 150.0).clamp(0.0, 1.0);
         let skill = (p.elo / 2000.0).clamp(0.2, 1.6);
-        let secs = 1.0 + skill * (12.0 * effort + 10.0 * closeness) + noticed as f32 * 0.05;
-        (secs.clamp(0.4, 120.0) * 1000.0) as u64
+        // Obvious moves (one clear winner, little calculation) come almost instantly.
+        let base = 0.2 + skill * (12.0 * effort + 10.0 * closeness) + noticed as f32 * 0.03;
+        let jitter = (0.45 * self.rng.gauss()).exp(); // human move times are log-normal
+        let secs = base * jitter;
+        (secs.clamp(0.1, 120.0) * 1000.0) as u64
     }
 }
 

@@ -21,6 +21,24 @@ fn curve(elo: f32, values: [f32; 8]) -> f32 {
     values[7]
 }
 
+/// Measured mapping from a public rating to the internal skill setting that
+/// plays like it (harness/calibrate.py against real Lichess players: average
+/// centipawn loss and blunder rate per rating band). Re-fit after any change
+/// to the thinking stages.
+const CALIB_LABEL: [f32; 7] = [100.0, 600.0, 1000.0, 1500.0, 2000.0, 2500.0, 3200.0];
+const CALIB_INTERNAL: [f32; 7] = [600.0, 2300.0, 2650.0, 2740.0, 2860.0, 2950.0, 3200.0];
+
+pub fn calibrated(label: f32) -> f32 {
+    let l = label.clamp(CALIB_LABEL[0], CALIB_LABEL[6]);
+    for i in 0..6 {
+        if l <= CALIB_LABEL[i + 1] {
+            let t = (l - CALIB_LABEL[i]) / (CALIB_LABEL[i + 1] - CALIB_LABEL[i]);
+            return CALIB_INTERNAL[i] + t * (CALIB_INTERNAL[i + 1] - CALIB_INTERNAL[i]);
+        }
+    }
+    CALIB_INTERNAL[6]
+}
+
 fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
@@ -42,6 +60,8 @@ const CONCEPT_MIDPOINT: [f32; N_CONCEPTS] = [
 #[derive(Clone, Debug)]
 pub struct Persona {
     pub elo: f32,
+    /// Internal (uncalibrated) skill setting the curves were read at.
+    pub skill: f32,
 
     // --- Perception (stage 1)
     /// Chance to notice one of your own capture opportunities.
@@ -95,13 +115,20 @@ pub struct Persona {
 
 impl Persona {
     pub fn from_elo(elo: f32) -> Persona {
+        let label = elo.clamp(100.0, 3200.0);
+        Self::from_internal(calibrated(label), label)
+    }
+
+    /// Persona at an uncalibrated internal skill setting, reporting `label` as its rating.
+    pub fn from_internal(elo: f32, label: f32) -> Persona {
         let e = elo.clamp(ANCHORS[0], ANCHORS[7]);
         let mut knowledge = [0.0; N_CONCEPTS];
         for (k, mid) in knowledge.iter_mut().zip(CONCEPT_MIDPOINT.iter()) {
             *k = sigmoid((e - mid) / 250.0);
         }
         Persona {
-            elo: e,
+            elo: label,
+            skill: e,
             p_see_capture: curve(e, [0.55, 0.80, 0.93, 0.98, 0.995, 1.0, 1.0, 1.0]),
             p_see_threat: curve(e, [0.20, 0.50, 0.78, 0.92, 0.97, 0.99, 0.995, 1.0]),
             p_blind_backward: curve(e, [0.60, 0.45, 0.30, 0.15, 0.07, 0.03, 0.02, 0.0]),
@@ -123,14 +150,14 @@ impl Persona {
             p_blunder_check: curve(e, [0.0, 0.25, 0.55, 0.80, 0.92, 0.97, 0.99, 1.0]),
             verify_depth: curve(e, [0.0, 0.0, 0.0, 0.0, 1.0, 3.0, 6.0, 14.0]).round() as u32,
             verify_tolerance_cp: curve(e, [9999.0, 9999.0, 9999.0, 9999.0, 250.0, 120.0, 50.0, 10.0]),
-            style_margin_cp: curve(e, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 40.0, 8.0]),
+            style_margin_cp: curve(e, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0, 8.0]),
             engine_weight: curve(e, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
         }
     }
 
     /// Probability that this player recognises a pattern typically learned at `pattern_elo`.
     pub fn recognises(&self, pattern_elo: f32) -> f32 {
-        sigmoid((self.elo + self.pattern_skill - pattern_elo) / 200.0)
+        sigmoid((self.skill + self.pattern_skill - pattern_elo) / 200.0)
     }
 }
 

@@ -247,10 +247,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dir", type=Path, default=Path("reports/anticheat"))
     ap.add_argument("--bots", nargs="+", default=["homo_ludens", "maia", "engine"])
+    ap.add_argument("--nodes", type=int, default=10_000, help="which analysis cache to grade with (0 = legacy analysis.jsonl, 30k)")
     ap.add_argument("--band-width", type=int, default=200)
     ap.add_argument("--out", type=Path)
     args = ap.parse_args()
-    an = load_analysis(args.dir / "analysis.jsonl")
+    an = load_analysis(args.dir / (f"analysis_{args.nodes}.jsonl" if args.nodes else "analysis.jsonl"))
 
     corpora = {"humans": player_games(args.dir / "humans.pgn", an, "humans")}
     for bot in args.bots:

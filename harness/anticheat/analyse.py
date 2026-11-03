@@ -60,12 +60,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--stockfish", required=True)
     ap.add_argument("--pgns", nargs="+", type=Path, required=True)
-    ap.add_argument("--cache", type=Path, default=Path("reports/anticheat/analysis.jsonl"))
-    ap.add_argument("--nodes", type=int, default=100_000)
+    ap.add_argument("--cache", type=Path, default=None, help="default: <dir of first pgn>/analysis_<nodes>.jsonl")
+    ap.add_argument("--nodes", type=int, default=10_000)
     ap.add_argument("--multipv", type=int, default=3)
     ap.add_argument("--start-ply", type=int, default=8)
     ap.add_argument("--workers", type=int, default=2)
     args = ap.parse_args()
+    if args.cache is None:
+        args.cache = args.pgns[0].parent / f"analysis_{args.nodes}.jsonl"
 
     done = set()
     if args.cache.exists():
