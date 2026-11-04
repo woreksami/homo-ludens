@@ -6,11 +6,7 @@
 //!   homo_ludens bench [depth]           engine speed and node count
 //!   homo_ludens selfplay <eloA> <eloB> [games]   quick persona-vs-persona match
 
-mod board;
-mod eval;
-mod mind;
-mod search;
-mod uci;
+use homo_ludens::{board, mind, search, uci};
 
 use board::*;
 use mind::{Mind, Persona};

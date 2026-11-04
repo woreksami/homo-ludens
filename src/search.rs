@@ -7,7 +7,7 @@
 
 use crate::board::*;
 use crate::eval::{self, PIECE_VALUE};
-use std::time::Instant;
+use crate::clock::Instant;
 
 pub const INF: i32 = 32_000;
 pub const MATE: i32 = 30_000;
@@ -114,7 +114,7 @@ impl Searcher {
                 }
             }
             if let Some(ms) = self.limits.movetime_ms {
-                if self.start.elapsed().as_millis() as u64 >= ms {
+                if self.start.elapsed_ms() >= ms {
                     self.stopped = true;
                 }
             }
@@ -410,7 +410,7 @@ impl Searcher {
                 depth: depth as u32,
                 nodes: self.nodes,
                 pv,
-                elapsed_ms: self.start.elapsed().as_millis() as u64,
+                elapsed_ms: self.start.elapsed_ms(),
             };
             scores[best_i] = alpha;
             if !self.silent {
@@ -424,7 +424,7 @@ impl Searcher {
             }
         }
         result.nodes = self.nodes;
-        result.elapsed_ms = self.start.elapsed().as_millis() as u64;
+        result.elapsed_ms = self.start.elapsed_ms();
         result
     }
 

@@ -13,3 +13,6 @@ panic = "abort"
 
 [profile.test]
 opt-level = 3
+
+[lib]
+crate-type = ["rlib", "cdylib"]

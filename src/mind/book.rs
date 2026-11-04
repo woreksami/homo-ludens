@@ -22,7 +22,10 @@ pub fn key(b: &Board) -> String {
 
 impl Book {
     pub fn load(path: &str) -> Option<Book> {
-        let text = std::fs::read_to_string(path).ok()?;
+        Book::parse(&std::fs::read_to_string(path).ok()?)
+    }
+
+    pub fn parse(text: &str) -> Option<Book> {
         let mut entries: HashMap<String, Vec<(i32, String, u32)>> = HashMap::new();
         for line in text.lines() {
             let mut it = line.split('\t');
@@ -74,6 +77,11 @@ impl Book {
 
 pub fn init(path: &str) {
     let _ = BOOK.set(Book::load(path));
+}
+
+/// Use an opening book given as text (the browser build embeds it).
+pub fn init_text(text: &str) {
+    let _ = BOOK.set(Book::parse(text));
 }
 
 pub fn get() -> Option<&'static Book> {
