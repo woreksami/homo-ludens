@@ -183,9 +183,29 @@ pub fn breakdown(b: &Board) -> Breakdown {
     Breakdown { terms: t }
 }
 
+const EVAL_CACHE_SIZE: usize = 1 << 16;
+
+thread_local! {
+    /// Recently evaluated positions (hash -> White's score). Searches evaluate
+    /// the same positions many times over; the static score never changes.
+    static EVAL_CACHE: std::cell::RefCell<Vec<(u64, i32)>> = std::cell::RefCell::new(vec![(0, 0); EVAL_CACHE_SIZE]);
+}
+
 /// Evaluation from the side to move's point of view, all concepts at full weight.
 pub fn evaluate(b: &Board) -> i32 {
-    let s = breakdown(b).total();
+    let i = (b.hash as usize) & (EVAL_CACHE_SIZE - 1);
+    let cached = EVAL_CACHE.with(|c| {
+        let e = c.borrow()[i];
+        if e.0 == b.hash && b.hash != 0 { Some(e.1) } else { None }
+    });
+    let s = match cached {
+        Some(v) => v,
+        None => {
+            let v = breakdown(b).total();
+            EVAL_CACHE.with(|c| c.borrow_mut()[i] = (b.hash, v));
+            v
+        }
+    };
     if b.side == WHITE {
         s
     } else {

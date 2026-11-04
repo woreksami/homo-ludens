@@ -615,11 +615,29 @@ impl Board {
 
     /// Fully legal moves.
     pub fn legal_moves(&self) -> Vec<Move> {
-        self.pseudo_moves(false).into_iter().filter(|&m| self.is_legal(m)).collect()
+        let check = self.in_check();
+        self.pseudo_moves(false).into_iter().filter(|&m| self.is_legal_fast(m, check)).collect()
     }
 
     pub fn legal_captures(&self) -> Vec<Move> {
-        self.pseudo_moves(true).into_iter().filter(|&m| self.is_legal(m)).collect()
+        let check = self.in_check();
+        self.pseudo_moves(true).into_iter().filter(|&m| self.is_legal_fast(m, check)).collect()
+    }
+
+    /// Legality with a shortcut: when not in check, a non-king, non-en-passant
+    /// move can only expose its own king if it starts on a line through the
+    /// king, so every other move is legal without playing it out.
+    #[inline]
+    fn is_legal_fast(&self, m: Move, in_check: bool) -> bool {
+        let k = self.king[self.side as usize];
+        if in_check || m.from == k || m.flag == FLAG_EP {
+            return self.is_legal(m);
+        }
+        let (df, dr) = (file_of(m.from) - file_of(k), rank_of(m.from) - rank_of(k));
+        if df != 0 && dr != 0 && df.abs() != dr.abs() {
+            return true;
+        }
+        self.is_legal(m)
     }
 
     pub fn is_legal(&self, m: Move) -> bool {
