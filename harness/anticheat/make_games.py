@@ -58,6 +58,9 @@ class Bot:
         self.kind = kind
         self.args = args
         self.engines: dict[int, UciEngine] = {}
+        # Resigning is the operator's decision on a real account, so test games
+        # play on to mate, a flag, a draw or the ply cap unless asked otherwise.
+        self.args_allow_resign = getattr(args, "allow_resign", False)
 
     def _engine(self, key: int) -> UciEngine:
         if key not in self.engines:
@@ -133,7 +136,7 @@ def replay(human: chess.pgn.Game, bot: Bot, game_no: int) -> chess.pgn.Game:
                 out.headers["Result"] = "1/2-1/2" if board.has_insufficient_material(not board.turn) else ("0-1" if board.turn == chess.WHITE else "1-0")
                 return out
             clocks[board.turn] += inc
-        if resign:
+        if resign and bot.args_allow_resign:
             out.headers["Termination"] = "Normal"
             out.headers["Result"] = "0-1" if board.turn == chess.WHITE else "1-0"
             return out
@@ -164,6 +167,7 @@ def main():
     ap.add_argument("--engine-games", type=int, default=60, help="cap for the slow full-strength control")
     ap.add_argument("--engine-ms", type=int, default=100)
     ap.add_argument("--seed", type=int, default=3)
+    ap.add_argument("--allow-resign", action="store_true", help="let the engine resign (off: the operator resigns on real accounts)")
     ap.add_argument("--out-dir", type=Path, default=Path("reports/anticheat"))
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)

@@ -7,7 +7,7 @@ actually play (memory, not calculation).
 
 Output: one line per (band, position): `band<TAB>fen4<TAB>uci:count uci:count ...`
 where fen4 is the first four FEN fields. Games listed in --exclude (by Site)
-are left out so the anti-cheat test games never leak into the book.
+(matched by site, players, date and round) are left out so the test games never leak into the book.
 """
 
 from __future__ import annotations
@@ -24,11 +24,15 @@ def fen4(b: chess.Board) -> str:
     return " ".join(b.fen().split()[:3])
 
 
-def sites(pgn: Path) -> set[str]:
+def game_key(h) -> tuple:
+    return (h.get("Site", ""), h.get("White", ""), h.get("Black", ""), h.get("Date", ""), h.get("Round", ""))
+
+
+def sites(pgn: Path) -> set[tuple]:
     out = set()
     with open(pgn, encoding="utf-8", errors="replace") as f:
         while (h := chess.pgn.read_headers(f)) is not None:
-            out.add(h.get("Site", ""))
+            out.add(game_key(h))
     return out
 
 
@@ -48,7 +52,7 @@ def main():
     for pgn in args.pgn:
         with open(pgn, encoding="utf-8", errors="replace") as f:
             while (g := chess.pgn.read_game(f)) is not None:
-                if g.headers.get("Site", "") in skip:
+                if game_key(g.headers) in skip:
                     continue
                 try:
                     elo = {chess.WHITE: int(g.headers["WhiteElo"]), chess.BLACK: int(g.headers["BlackElo"])}
