@@ -26,6 +26,7 @@ pub struct Engine {
     pub raw_skill: bool,
     pub tc_scale: f32,
     last_capture_sq: Option<u8>,
+    last_to: Option<u8>,
     game_salt: u64,
 }
 
@@ -43,6 +44,7 @@ impl Engine {
             raw_skill: false,
             tc_scale: 1.0,
             last_capture_sq: None,
+            last_to: None,
             game_salt: salt,
         }
     }
@@ -65,11 +67,13 @@ impl Engine {
         }
         self.history.clear();
         self.last_capture_sq = None;
+        self.last_to = None;
         if args.get(i) == Some(&"moves") {
             for s in &args[i + 1..] {
                 match board.parse_uci(s) {
                     Some(m) => {
                         self.last_capture_sq = if board.sq[m.to as usize] != 0 { Some(m.to) } else { None };
+                        self.last_to = Some(m.to);
                         self.history.push(board.hash);
                         board = board.make(m);
                     }
@@ -118,6 +122,7 @@ impl Engine {
         let mut mind = Mind::new(if self.raw_skill { Persona::from_internal(self.elo, self.elo) } else { Persona::from_elo(self.elo) }, seed, &mut self.searcher);
         mind.tc_scale = self.tc_scale;
         mind.last_capture_sq = self.last_capture_sq;
+        mind.last_to = self.last_to;
         let get = |k: &str| args.iter().position(|&a| a == k).and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<f32>().ok());
         let (time, inc) = if self.board.side == WHITE { (get("wtime"), get("winc")) } else { (get("btime"), get("binc")) };
         mind.clock = time.map(|t| (t / 1000.0, inc.unwrap_or(0.0) / 1000.0));
@@ -206,6 +211,25 @@ impl Engine {
                     let scored = self.searcher.score_moves(&self.board, &moves, d, Some(200_000), None);
                     let parts: Vec<String> = scored.iter().map(|(m, s)| format!("{}:{}", m.uci(), s)).collect();
                     println!("evalmoves {}", parts.join(" "));
+                }
+                // Non-standard: dump move-naturalness features for fitting.
+                // `natdump <in> <out>`: input lines `fen<TAB>last_to_square_or_-<TAB>played_uci`.
+                "natdump" => {
+                    use std::io::Write;
+                    let text = std::fs::read_to_string(args[1]).unwrap_or_default();
+                    let mut out = std::io::BufWriter::new(std::fs::File::create(args[2]).unwrap());
+                    for line in text.lines() {
+                        let f: Vec<&str> = line.split('\t').collect();
+                        let Ok(b) = Board::from_fen(f[0]) else { continue };
+                        let last = crate::board::parse_sq(f[1]);
+                        for m in b.legal_moves() {
+                            let x = crate::mind::natural::features(&b, m, last);
+                            let xs: Vec<String> = x.iter().map(|v| format!("{v:.3}")).collect();
+                            writeln!(out, "{} {}", (m.uci() == f[2]) as u8, xs.join(" ")).unwrap();
+                        }
+                        writeln!(out).unwrap();
+                    }
+                    println!("natdump done");
                 }
                 "perft" => {
                     let d = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(4);

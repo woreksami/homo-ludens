@@ -43,12 +43,14 @@ pub struct Mind<'a> {
     pub clock: Option<(f32, f32)>,
     /// Square the opponent just captured on, for spotting recaptures.
     pub last_capture_sq: Option<u8>,
+    /// Square the opponent's last move went to.
+    pub last_to: Option<u8>,
     searcher: &'a mut Searcher,
 }
 
 impl<'a> Mind<'a> {
     pub fn new(persona: Persona, seed: u64, searcher: &'a mut Searcher) -> Mind<'a> {
-        Mind { persona, rng: Rng::new(seed), seed, nodes: 0, budget: 0, tc_scale: 1.0, clock: None, last_capture_sq: None, searcher }
+        Mind { persona, rng: Rng::new(seed), seed, nodes: 0, budget: 0, tc_scale: 1.0, clock: None, last_capture_sq: None, last_to: None, searcher }
     }
 
     /// How the position "feels" to this player, from the side to move's view.
@@ -139,11 +141,16 @@ impl<'a> Mind<'a> {
 
     fn sample_candidates(&mut self, b: &Board, percepts: &[Percept], k: usize, first_round: bool) -> Vec<Candidate> {
         // Intuition: how good each move "looks" at a glance.
+        // How natural each move looks to players of this rating (learned from their games).
+        let mv: Vec<Move> = percepts.iter().map(|p| p.mv).collect();
+        let nat = super::natural::log_probs(b, &mv, self.last_to, self.persona.elo);
+        let nat_w = self.persona.naturalness_cp;
         let mut scored: Vec<(f32, &Percept)> = percepts
             .iter()
-            .map(|p| {
+            .zip(nat.iter())
+            .map(|(p, &lp)| {
                 let after = b.make(p.mv);
-                let mut s = -self.feel(&after) as f32;
+                let mut s = -self.feel(&after) as f32 + nat_w * lp;
                 s += p.salience * self.persona.forcing_attraction;
                 // "Can it just be taken?" Noticed as often as threats are.
                 if let Some(loss) = en_prise(&after, p.mv.to) {
@@ -345,11 +352,13 @@ impl<'a> Mind<'a> {
 
         // Stage 6b: verification by real search (strong settings only).
         if p.verify_depth > 0 {
+            let depth = p.verify_depth;
+            let tolerance = p.verify_tolerance_cp;
             let moves: Vec<Move> = cands.iter().map(|c| c.mv).collect();
-            let budget = 20_000u64 * p.verify_depth as u64 * p.verify_depth as u64;
-            let scored = self.searcher.score_moves(b, &moves, p.verify_depth, Some(budget), limits.movetime_ms.map(|t| t * 35 / 100));
+            let budget = 20_000u64 * depth as u64 * depth as u64;
+            let scored = self.searcher.score_moves(b, &moves, depth, Some(budget), limits.movetime_ms.map(|t| t * 35 / 100));
             let top = scored.iter().map(|x| x.1).max().unwrap_or(0);
-            let ok: Vec<Move> = scored.iter().filter(|x| (x.1 as f32) >= top as f32 - p.verify_tolerance_cp).map(|x| x.0).collect();
+            let ok: Vec<Move> = scored.iter().filter(|x| (x.1 as f32) >= top as f32 - tolerance).map(|x| x.0).collect();
             if !ok.contains(&best) {
                 let pick = cands.iter().find(|c| ok.contains(&c.mv)).map(|c| c.mv).unwrap_or(best);
                 trace.push(format!(

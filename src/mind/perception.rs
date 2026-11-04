@@ -123,7 +123,7 @@ fn is_long(m: Move) -> bool {
 }
 
 /// The squares attacked by a piece of `kind` and color `c` standing on `s`.
-fn attacks_from(b: &Board, s: u8, kind: u8, c: u8) -> Vec<u8> {
+pub fn attacks_from(b: &Board, s: u8, kind: u8, c: u8) -> Vec<u8> {
     match kind {
         PAWN => {
             let dr = if c == WHITE { 1 } else { -1 };

@@ -26,7 +26,7 @@ fn curve(elo: f32, values: [f32; 8]) -> f32 {
 /// centipawn loss and blunder rate per rating band). Re-fit after any change
 /// to the thinking stages.
 const CALIB_LABEL: [f32; 7] = [100.0, 600.0, 1000.0, 1500.0, 2000.0, 2500.0, 3200.0];
-const CALIB_INTERNAL: [f32; 7] = [600.0, 2340.0, 2650.0, 2740.0, 2860.0, 2950.0, 3200.0];
+const CALIB_INTERNAL: [f32; 7] = [600.0, 2340.0, 2690.0, 2780.0, 2890.0, 2970.0, 3200.0];
 
 pub fn calibrated(label: f32) -> f32 {
     let l = label.clamp(CALIB_LABEL[0], CALIB_LABEL[6]);
@@ -111,6 +111,8 @@ pub struct Persona {
     pub style_margin_cp: f32,
     /// Weight of the engine's own move in the top settings (0 = purely human candidates).
     pub engine_weight: f32,
+    /// Centipawns of intuition per natural-log unit of move naturalness.
+    pub naturalness_cp: f32,
 }
 
 impl Persona {
@@ -152,6 +154,7 @@ impl Persona {
             verify_tolerance_cp: curve(e, [9999.0, 9999.0, 9999.0, 9999.0, 250.0, 120.0, 50.0, 10.0]),
             style_margin_cp: curve(e, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0, 8.0]),
             engine_weight: curve(e, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+            naturalness_cp: nat_scale() * curve(e, [40.0, 40.0, 35.0, 30.0, 25.0, 20.0, 15.0, 0.0]),
         }
     }
 
@@ -224,4 +227,15 @@ mod tests {
         assert!(mean.abs() < 0.05, "mean {mean}");
         assert!((var.sqrt() - 1.0).abs() < 0.08, "sd {}", var.sqrt());
     }
+}
+
+/// Global scale on the naturalness prior (env HL_NAT_SCALE, for experiments; default 1).
+fn nat_scale() -> f32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Ok(v) = std::env::var("HL_NAT_SCALE") {
+            return v.parse().unwrap_or(1.0);
+        }
+    }
+    1.0
 }

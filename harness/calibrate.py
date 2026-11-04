@@ -27,7 +27,7 @@ from uci_client import UciEngine  # noqa: E402
 CLIP = 1000
 
 
-def sample(pgn: Path, per_band: int, width: int, seed: int):
+def sample(pgn: Path, per_band: int, width: int, seed: int, min_ply: int = 8, max_ply: int = 10**9):
     rng = random.Random(seed)
     pools = {}
     with open(pgn, encoding="utf-8", errors="replace") as f:
@@ -36,7 +36,7 @@ def sample(pgn: Path, per_band: int, width: int, seed: int):
             b = g.board()
             moves = []
             for i, m in enumerate(g.mainline_moves()):
-                if i >= 8:
+                if min_ply <= i < max_ply:
                     pools.setdefault(elo[b.turn] // width * width, []).append((b.fen(), list(moves), m.uci(), elo[b.turn]))
                 moves.append(m.uci())
                 b.push(m)
@@ -84,13 +84,15 @@ def main():
     ap.add_argument("--nodes", type=int, default=30000)
     ap.add_argument("--movetime", type=int, default=200, help="real compute per move, ms")
     ap.add_argument("--raw", action="store_true", help="settings are internal skill, not calibrated ratings")
+    ap.add_argument("--min-ply", type=int, default=8)
+    ap.add_argument("--max-ply", type=int, default=10**9)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--cache", type=Path, default=Path("reports/calib_cache.json"))
     ap.add_argument("--out", type=Path, default=Path("reports/calibration.json"))
     args = ap.parse_args()
     args.cache.parent.mkdir(parents=True, exist_ok=True)
 
-    pos = sample(args.pgn, args.per_band, 200, 7)
+    pos = sample(args.pgn, args.per_band, 200, 7, args.min_ply, args.max_ply)
     settings = [int(s) for s in args.settings.split(",")]
     print(f"{len(pos)} positions x {len(settings)} settings", file=sys.stderr)
 

@@ -41,6 +41,7 @@ struct Pos {
     board: Board,
     history: Vec<u64>,
     last_capture_sq: Option<u8>,
+    last_to: Option<u8>,
 }
 
 fn read_position() -> Result<Pos, String> {
@@ -51,13 +52,15 @@ fn read_position() -> Result<Pos, String> {
     let mut board = if fen.is_empty() || fen == "startpos" { Board::startpos() } else { Board::from_fen(fen)? };
     let mut history = vec![];
     let mut last_capture_sq = None;
+    let mut last_to = None;
     for s in lines.next().unwrap_or("").split_whitespace() {
         let m = board.parse_uci(s).ok_or(format!("illegal move {s}"))?;
         last_capture_sq = if board.sq[m.to as usize] != 0 { Some(m.to) } else { None };
+        last_to = Some(m.to);
         history.push(board.hash);
         board = board.make(m);
     }
-    Ok(Pos { board, history, last_capture_sq })
+    Ok(Pos { board, history, last_capture_sq, last_to })
 }
 
 fn insufficient_material(b: &Board) -> bool {
@@ -128,6 +131,7 @@ pub extern "C" fn hl_think(elo: f32, seed: u32, clock_ms: f64, inc_ms: f64) -> *
         mind.tc_scale = (base_guess / 300.0).clamp(0.1, 20.0) as f32;
     }
     mind.last_capture_sq = p.last_capture_sq;
+    mind.last_to = p.last_to;
     let limits = Limits { movetime_ms: Some(400), ..Limits::default() };
     let t = mind.think(&p.board, &limits);
     let mut out = format!("move {}\nthink {}\nresign {}\n", t.best.uci(), t.think_ms, t.resign as u8);
