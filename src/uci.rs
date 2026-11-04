@@ -25,6 +25,7 @@ pub struct Engine {
     pub show_thoughts: bool,
     pub raw_skill: bool,
     pub tc_scale: f32,
+    last_capture_sq: Option<u8>,
     game_salt: u64,
 }
 
@@ -41,6 +42,7 @@ impl Engine {
             show_thoughts: true,
             raw_skill: false,
             tc_scale: 1.0,
+            last_capture_sq: None,
             game_salt: salt,
         }
     }
@@ -62,10 +64,12 @@ impl Engine {
             i = 1;
         }
         self.history.clear();
+        self.last_capture_sq = None;
         if args.get(i) == Some(&"moves") {
             for s in &args[i + 1..] {
                 match board.parse_uci(s) {
                     Some(m) => {
+                        self.last_capture_sq = if board.sq[m.to as usize] != 0 { Some(m.to) } else { None };
                         self.history.push(board.hash);
                         board = board.make(m);
                     }
@@ -86,7 +90,8 @@ impl Engine {
         l.nodes = get("nodes");
         l.movetime_ms = get("movetime");
         let (time, inc) = if self.board.side == WHITE { (get("wtime"), get("winc")) } else { (get("btime"), get("binc")) };
-        if let Some(t) = time {
+        // An explicit movetime wins over the clock (the clock then only feeds the simulated human).
+        if let (Some(t), None) = (time, l.movetime_ms) {
             let moves_to_go = get("movestogo").unwrap_or(30).max(1);
             l.movetime_ms = Some((t / moves_to_go + inc.unwrap_or(0) * 3 / 4).min(t.saturating_sub(50)).max(10));
         }
@@ -112,6 +117,10 @@ impl Engine {
         let seed = if self.seed != 0 { self.seed } else { self.game_salt } ^ self.board.hash;
         let mut mind = Mind::new(if self.raw_skill { Persona::from_internal(self.elo, self.elo) } else { Persona::from_elo(self.elo) }, seed, &mut self.searcher);
         mind.tc_scale = self.tc_scale;
+        mind.last_capture_sq = self.last_capture_sq;
+        let get = |k: &str| args.iter().position(|&a| a == k).and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<f32>().ok());
+        let (time, inc) = if self.board.side == WHITE { (get("wtime"), get("winc")) } else { (get("btime"), get("binc")) };
+        mind.clock = time.map(|t| (t / 1000.0, inc.unwrap_or(0.0) / 1000.0));
         let t = mind.think(&self.board, &limits);
         if self.show_thoughts {
             for line in &t.trace {

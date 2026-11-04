@@ -71,7 +71,7 @@ class Bot:
             self.engines[key] = e
         return self.engines[key]
 
-    def move(self, start_fen: str, moves: list[str], elo: int, seed: int, tc: str = "300+0") -> tuple[str, float | None, bool]:
+    def move(self, start_fen: str, moves: list[str], elo: int, seed: int, tc: str = "300+0", clock: str = "") -> tuple[str, float | None, bool]:
         if self.kind == "maia":
             level = min(MAIA_LEVELS, key=lambda l: abs(l - elo))
             r = self._engine(level).play(start_fen, moves, go="nodes 1")
@@ -81,7 +81,7 @@ class Bot:
             e.set_option("UCI_Elo", elo)
             e.set_option("Seed", seed)
             e.set_option("SimTimeControl", tc)
-            r = e.play(start_fen, moves, go="movetime 200")
+            r = e.play(start_fen, moves, go=f"movetime 200 {clock}".strip())
             return r.move, (r.think_ms or 0) / 1000, "resign" in r.trace
         r = e.play(start_fen, moves, go=f"movetime {self.args.engine_ms}")
         return r.move, None, False
@@ -112,8 +112,27 @@ def replay(human: chess.pgn.Game, bot: Bot, game_no: int) -> chess.pgn.Game:
         node = node.add_variation(m)
         moves.append(m.uci())
         board.push(m)
+    # Simulated clocks (Homo Ludens only): the replayed opening is charged about
+    # a second a move, then each move's simulated think time, plus increment.
+    tc = h.get("TimeControl", "300+0")
+    try:
+        base, inc = (float(x) for x in tc.split("+"))
+    except ValueError:
+        base, inc = 0.0, 0.0
+    clocks = {chess.WHITE: base - OPENING_PLIES / 2, chess.BLACK: base - OPENING_PLIES / 2} if bot.kind == "homo_ludens" and base > 0 else None
     while not board.is_game_over(claim_draw=True) and board.ply() < 200:
-        uci, secs, resign = bot.move(start_fen, moves, elo[board.turn], seed=game_no * 1000 + board.ply(), tc=h.get("TimeControl", "300+0"))
+        clock = ""
+        if clocks:
+            clock = (f"wtime {int(clocks[chess.WHITE] * 1000)} btime {int(clocks[chess.BLACK] * 1000)} "
+                     f"winc {int(inc * 1000)} binc {int(inc * 1000)}")
+        uci, secs, resign = bot.move(start_fen, moves, elo[board.turn], seed=game_no * 1000 + board.ply(), tc=tc, clock=clock)
+        if clocks and secs is not None:
+            clocks[board.turn] -= secs
+            if clocks[board.turn] <= 0:
+                out.headers["Termination"] = "Time forfeit"
+                out.headers["Result"] = "1/2-1/2" if board.has_insufficient_material(not board.turn) else ("0-1" if board.turn == chess.WHITE else "1-0")
+                return out
+            clocks[board.turn] += inc
         if resign:
             out.headers["Termination"] = "Normal"
             out.headers["Result"] = "0-1" if board.turn == chess.WHITE else "1-0"

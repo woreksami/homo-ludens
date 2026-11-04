@@ -39,12 +39,16 @@ pub struct Mind<'a> {
     budget: u32,
     /// Time-control scale for simulated think time (1.0 = 5-minute game).
     pub tc_scale: f32,
+    /// Simulated clock (remaining seconds, increment seconds), when playing on one.
+    pub clock: Option<(f32, f32)>,
+    /// Square the opponent just captured on, for spotting recaptures.
+    pub last_capture_sq: Option<u8>,
     searcher: &'a mut Searcher,
 }
 
 impl<'a> Mind<'a> {
     pub fn new(persona: Persona, seed: u64, searcher: &'a mut Searcher) -> Mind<'a> {
-        Mind { persona, rng: Rng::new(seed), seed, nodes: 0, budget: 0, tc_scale: 1.0, searcher }
+        Mind { persona, rng: Rng::new(seed), seed, nodes: 0, budget: 0, tc_scale: 1.0, clock: None, last_capture_sq: None, searcher }
     }
 
     /// How the position "feels" to this player, from the side to move's view.
@@ -204,6 +208,14 @@ impl<'a> Mind<'a> {
         let p = self.persona.clone();
         self.nodes = 0;
         self.budget = p.node_budget;
+        // Time trouble: with little on the clock, players calculate less.
+        if let Some((rem, inc)) = self.clock {
+            let t = rem + 10.0 * inc;
+            if t < 15.0 {
+                self.budget = ((p.node_budget as f32) * (t / 15.0).max(0.25)) as u32;
+                trace.push(format!("Only {:.0} s left; no time to calculate deeply.", rem));
+            }
+        }
         trace.push(format!("Playing as a {:.0}-rated player.", p.elo));
 
         let legal = b.legal_moves();
@@ -377,7 +389,7 @@ impl<'a> Mind<'a> {
         }
 
         // Stage 7: decision and simulated think time.
-        let think_ms = self.think_time(&cands, percepts.len());
+        let think_ms = self.think_time(b, best, &cands, percepts.len());
         trace.push(format!("Play {} after about {:.1} s.", san(b, best), think_ms as f32 / 1000.0));
         // Resignation: real Lichess players resign when clearly lost (median
         // about -12 pawns, a quarter by -8); many play on to mate. Per-move
@@ -395,23 +407,41 @@ impl<'a> Mind<'a> {
         self.calculate(b, depth, -INF, INF, forgotten, line, 1)
     }
 
-    /// Simulated human think time. Obvious moves (one candidate far ahead,
-    /// typically recaptures and forced replies) come almost at once; close
-    /// decisions take longest. Scaled by the time control (`tc_scale`, 1.0 =
-    /// a 5-minute game) and log-normal like real move times.
-    fn think_time(&mut self, cands: &[Candidate], noticed: usize) -> u64 {
-        let p = self.persona.clone();
+    /// Simulated human think time, budgeted the way a strong player uses a clock.
+    ///
+    /// - An ordinary move gets an allotment: time left / moves still to play, plus most of the increment.
+    /// - Obvious moves (recaptures, one candidate far ahead) take a small fraction of that.
+    /// - Critical moves (close candidates, a busy position, the early middlegame) take a few
+    ///   allotments, but never more than about a quarter of the remaining clock.
+    /// - Move times are log-normal around those targets, as real move times are.
+    /// Without a clock, `tc_scale` (1.0 = 5-minute game) sets the allotment.
+    fn think_time(&mut self, b: &Board, best: Move, cands: &[Candidate], noticed: usize) -> u64 {
         let gap = if cands.len() >= 2 { (cands[0].value - cands[1].value).abs() as f32 } else { 500.0 };
-        let tc = self.tc_scale.clamp(0.1, 20.0);
-        let secs = if gap >= 150.0 && self.rng.chance(0.8) {
-            0.45 * (0.5 * self.rng.gauss()).exp() * tc.sqrt()
+        let move_no = b.fullmove as f32;
+        let (allot, remaining) = match self.clock {
+            Some((rem, inc)) => {
+                let moves_left = (45.0 - 0.6 * move_no).max(18.0);
+                (rem.max(0.0) / moves_left + 0.8 * inc, rem.max(0.0))
+            }
+            None => (4.0 * self.tc_scale.clamp(0.1, 20.0), f32::INFINITY),
+        };
+        let recapture = self.last_capture_sq == Some(best.to) && b.sq[best.to as usize] != 0;
+        let obvious = recapture || gap >= 200.0 || (gap >= 120.0 && self.rng.chance(0.6));
+        let mut secs = if obvious {
+            (0.3 + 0.08 * allot) * (0.4 * self.rng.gauss()).exp()
         } else {
             let closeness = (1.0 - gap / 150.0).clamp(0.0, 1.0);
-            let effort = (self.nodes as f32 / p.node_budget.max(1) as f32).min(1.0);
             let complexity = (noticed as f32 / 30.0).min(1.0);
-            (1.0 + 7.0 * closeness + 2.0 * effort + 3.0 * complexity) * tc * (0.6 * self.rng.gauss()).exp()
+            let phase = 0.6 * (-((move_no - 20.0) / 10.0).powi(2)).exp();
+            let criticality = 0.4 + 1.4 * closeness + 0.6 * complexity + phase;
+            // Opening familiarity: even out of book, early positions feel known
+            // and go quickly; time use peaks in the early middlegame.
+            let t = ((move_no - 6.0) / 10.0).clamp(0.0, 1.0);
+            let familiar = 0.3 + 0.7 * t * t * (3.0 - 2.0 * t);
+            (allot * criticality * familiar * (0.5 * self.rng.gauss()).exp()).min(5.0 * allot)
         };
-        (secs.clamp(0.1, 600.0) * 1000.0) as u64
+        secs = secs.min(0.25 * remaining).max(0.15);
+        (secs.min(600.0) * 1000.0) as u64
     }
 }
 
