@@ -203,7 +203,7 @@ impl Engine {
                     let d = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
                     self.searcher.set_game_history(self.history.clone());
                     let moves = self.board.legal_moves();
-                    let scored = self.searcher.score_moves(&self.board, &moves, d, Some(200_000));
+                    let scored = self.searcher.score_moves(&self.board, &moves, d, Some(200_000), None);
                     let parts: Vec<String> = scored.iter().map(|(m, s)| format!("{}:{}", m.uci(), s)).collect();
                     println!("evalmoves {}", parts.join(" "));
                 }

@@ -347,7 +347,7 @@ impl<'a> Mind<'a> {
         if p.verify_depth > 0 {
             let moves: Vec<Move> = cands.iter().map(|c| c.mv).collect();
             let budget = 20_000u64 * p.verify_depth as u64 * p.verify_depth as u64;
-            let scored = self.searcher.score_moves(b, &moves, p.verify_depth, Some(budget));
+            let scored = self.searcher.score_moves(b, &moves, p.verify_depth, Some(budget), limits.movetime_ms.map(|t| t * 35 / 100));
             let top = scored.iter().map(|x| x.1).max().unwrap_or(0);
             let ok: Vec<Move> = scored.iter().filter(|x| (x.1 as f32) >= top as f32 - p.verify_tolerance_cp).map(|x| x.0).collect();
             if !ok.contains(&best) {
@@ -365,16 +365,24 @@ impl<'a> Mind<'a> {
         if p.engine_weight > 0.0 {
             let lim = Limits {
                 depth: limits.depth.or(Some((6.0 + 14.0 * p.engine_weight) as u32)),
-                movetime_ms: limits.movetime_ms,
+                movetime_ms: limits.movetime_ms.map(|t| t * 45 / 100),
                 nodes: limits.nodes,
                 root_moves: None,
             };
             self.searcher.silent = true;
             let full = self.searcher.search(b, lim);
             self.searcher.silent = false;
-            let mine = self.searcher.score_moves(b, &[best], full.depth.saturating_sub(1).max(1), Some(full.nodes.max(10_000)));
-            let my_score = mine.first().map(|x| x.1).unwrap_or(-INF);
-            if (my_score as f32) < full.score as f32 - p.style_margin_cp && full.best != best {
+            // Compare the human choice with the engine's at the same depth and by the same method.
+            let pair = if full.best != best {
+                self.searcher.score_moves(b, &[best, full.best], full.depth.saturating_sub(1).max(1), Some(2 * full.nodes.max(10_000)), limits.movetime_ms.map(|t| t / 5))
+            } else {
+                vec![]
+            };
+            let (my_score, engine_score) = match pair.as_slice() {
+                [a, e] => (a.1, e.1),
+                _ => (full.score, full.score),
+            };
+            if (my_score as f32) < engine_score as f32 - p.style_margin_cp && full.best != best {
                 trace.push(format!(
                     "Deeper calculation ({} plies) finds {} ({}) better than {} ({}).",
                     full.depth,

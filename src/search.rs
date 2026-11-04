@@ -507,23 +507,33 @@ impl Searcher {
 
     /// Exact score of each given root move at a fixed depth (side to move's view).
     /// Used by the mind to check its own candidates.
-    pub fn score_moves(&mut self, b: &Board, moves: &[Move], depth: u32, node_budget: Option<u64>) -> Vec<(Move, i32)> {
-        self.start = Instant::now();
-        self.nodes = 0;
-        self.stopped = false;
-        self.limits = Limits { nodes: node_budget, ..Default::default() };
+    /// Scores each root move by its own iterative deepening up to `depth`, keeping the
+    /// score of the deepest iteration that finished within that move's share of the
+    /// budget (an interrupted iteration's score is meaningless and is discarded).
+    pub fn score_moves(&mut self, b: &Board, moves: &[Move], depth: u32, node_budget: Option<u64>, time_ms: Option<u64>) -> Vec<(Move, i32)> {
+        let share = node_budget.map(|n| (n / moves.len().max(1) as u64).max(2_000));
+        let tshare = time_ms.map(|t| (t / moves.len().max(1) as u64).max(5));
         let mut out = Vec::with_capacity(moves.len());
         self.rep.push(b.hash);
         for &m in moves {
+            self.start = Instant::now();
+            self.nodes = 0;
+            self.stopped = false;
+            self.limits = Limits { nodes: share, movetime_ms: tshare, ..Default::default() };
             let child = b.make(m);
-            let s = if depth == 0 {
-                -self.quiesce(&child, -INF, INF, 1)
-            } else {
-                -self.negamax(&child, depth as i32 - 1, -INF, INF, 1, true)
-            };
+            let mut s = -self.quiesce(&child, -INF, INF, 1);
+            self.stopped = false;
+            for d in 1..=depth as i32 {
+                let v = -self.negamax(&child, d - 1, -INF, INF, 1, true);
+                if self.stopped {
+                    break;
+                }
+                s = v;
+            }
             out.push((m, s));
         }
         self.rep.pop();
+        self.stopped = false;
         out
     }
 }
