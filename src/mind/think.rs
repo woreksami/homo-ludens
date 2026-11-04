@@ -221,7 +221,7 @@ impl<'a> Mind<'a> {
         let legal = b.legal_moves();
         if legal.len() == 1 {
             trace.push(format!("Only one legal move: {}.", san(b, legal[0])));
-            let ms = (150.0 + 250.0 * self.rng.f32()) as u64;
+            let ms = (350.0 + 300.0 * self.rng.f32()) as u64;
             return Thought { best: legal[0], think_ms: ms, trace, candidates: vec![], nodes: 0, resign: false };
         }
 
@@ -231,7 +231,8 @@ impl<'a> Mind<'a> {
                 if legal.contains(&m) {
                     let ms = ((0.3 + 2.5 * self.rng.f32().powi(2)) * 1000.0 * self.tc_scale.clamp(0.1, 20.0).sqrt() / (1.0 + seen / 200.0).sqrt()) as u64;
                     trace.push(format!("I know this position; {} is what I usually play.", san(b, m)));
-                    return Thought { best: m, think_ms: ms.max(120), trace, candidates: vec![], nodes: 0, resign: false };
+                    let floor = (400.0 + 150.0 * self.rng.f32()) as u64;
+                    return Thought { best: m, think_ms: ms.max(floor), trace, candidates: vec![], nodes: 0, resign: false };
                 }
             }
         }
@@ -426,9 +427,12 @@ impl<'a> Mind<'a> {
             None => (4.0 * self.tc_scale.clamp(0.1, 20.0), f32::INFINITY),
         };
         let recapture = self.last_capture_sq == Some(best.to) && b.sq[best.to as usize] != 0;
-        let obvious = recapture || gap >= 200.0 || (gap >= 120.0 && self.rng.chance(0.6));
+        let obvious = recapture || gap >= 300.0 || (gap >= 150.0 && self.rng.chance(0.5));
         let mut secs = if obvious {
-            (0.3 + 0.08 * allot) * (0.4 * self.rng.gauss()).exp()
+            // Even an obvious move takes a human time to see the opponent's
+            // move, confirm the idea and move the mouse: about a second in
+            // blitz, a bit less in bullet, longer in slow games.
+            (0.55 + 0.1 * allot) * (0.35 * self.rng.gauss()).exp()
         } else {
             let closeness = (1.0 - gap / 150.0).clamp(0.0, 1.0);
             let complexity = (noticed as f32 / 30.0).min(1.0);
@@ -440,7 +444,10 @@ impl<'a> Mind<'a> {
             let familiar = 0.3 + 0.7 * t * t * (3.0 - 2.0 * t);
             (allot * criticality * familiar * (0.5 * self.rng.gauss()).exp()).min(5.0 * allot)
         };
-        secs = secs.min(0.25 * remaining).max(0.15);
+        // Perception plus motor time: online players rarely move in under ~0.4 s
+        // (premoves aside), except when the clock is nearly gone.
+        let floor = if remaining < 5.0 { 0.15 } else { 0.4 + 0.1 * self.rng.f32() };
+        secs = secs.min(0.25 * remaining).max(floor);
         (secs.min(600.0) * 1000.0) as u64
     }
 }
