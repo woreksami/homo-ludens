@@ -65,6 +65,32 @@ def move_accuracy(before_wp: float, after_wp: float) -> float:
     return max(0.0, min(100.0, raw))
 
 
+def lichess_game_accuracy(seq: list[tuple[bool, float, float, float]]) -> dict[bool, float]:
+    """Lichess's game accuracy (lila AccuracyPercent.gameAccuracy), per side.
+
+    seq: per analysed move, (side, white win% before, white win% after, move accuracy).
+    Each move is weighted by the volatility (std dev of win%) of a sliding window
+    around it; the game accuracy is the mean of that weighted mean and the
+    harmonic mean of the move accuracies, so a single blunder costs a lot.
+    """
+    if not seq:
+        return {}
+    wps = [seq[0][1]] + [x[2] for x in seq]
+    n = len(seq)
+    w = max(2, min(8, n // 10))
+    windows = [wps[:w]] * max(0, min(w, len(wps)) - 2) + [wps[i:i + w] for i in range(len(wps) - w + 1)]
+    weights = [max(0.5, min(12.0, statistics.pstdev(win))) for win in windows[:n]]
+    out = {}
+    for side in (chess.WHITE, chess.BLACK):
+        pairs = [(x[3], weights[i]) for i, x in enumerate(seq) if x[0] == side and i < len(weights)]
+        if not pairs:
+            continue
+        weighted = sum(a * k for a, k in pairs) / sum(k for _, k in pairs)
+        harmonic = len(pairs) / sum(1 / max(a, 1.0) for a, _ in pairs)
+        out[side] = (weighted + harmonic) / 2
+    return out
+
+
 def regan_F(cp: float) -> float:
     v = cp / 100
     return math.copysign(math.log1p(abs(v)), v)
@@ -111,6 +137,7 @@ def player_games(pgn: Path, an: dict, corpus: str) -> list[dict]:
             h = g.headers
             game_id = h.get("Site", "").rsplit("/", 1)[-1]
             per = {chess.WHITE: defaultdict(list), chess.BLACK: defaultdict(list)}
+            seq = []
             b = g.board()
             node = g
             for ply, m in enumerate(g.mainline_moves()):
@@ -130,6 +157,8 @@ def player_games(pgn: Path, an: dict, corpus: str) -> list[dict]:
                         d = per[side]
                         d["loss"].append(loss)
                         d["acc"].append(move_accuracy(wb, wa))
+                        white_view = (lambda x: x) if side == chess.WHITE else (lambda x: 100 - x)  # noqa: E731
+                        seq.append((side, white_view(wb), white_view(wa), d["acc"][-1]))
                         drop = wb - wa
                         d["inacc"].append(1 if 5 <= drop < 10 else 0)
                         d["mistake"].append(1 if 10 <= drop < 15 else 0)
@@ -157,6 +186,7 @@ def player_games(pgn: Path, an: dict, corpus: str) -> list[dict]:
                         if mt:
                             d["emt"].append(float(mt.group(1)))
                 b.push(m)
+            game_acc = lichess_game_accuracy(seq)
             for side in (chess.WHITE, chess.BLACK):
                 d = per[side]
                 if len(d["loss"]) < 10:
@@ -172,7 +202,8 @@ def player_games(pgn: Path, an: dict, corpus: str) -> list[dict]:
                     "speed": speed_of(h.get("TimeControl", "-")),
                     "moves": len(d["loss"]),
                     "acpl": mean("loss"),
-                    "accuracy": mean("acc"),
+                    "accuracy": game_acc.get(side, float("nan")),
+                    "move_accuracy": mean("acc"),
                     "top1_match": mean("top1"),
                     "regan_error": mean("regan"),
                     "inaccuracy_rate": mean("inacc"),
@@ -302,7 +333,7 @@ def main():
             str(b): {f: {"human": statistics.fmean([r[f] for r in h if not math.isnan(r[f])] or [float("nan")]),
                          "bot": statistics.fmean([r[f] for r in bt if not math.isnan(r[f])] or [float("nan")]),
                          "z": z_two_sample([r[f] for r in bt], [r[f] for r in h])}
-                     for f in ("acpl", "top1_match", "blunder_rate")}
+                     for f in ("acpl", "accuracy", "top1_match", "blunder_rate")}
             for b, (h, bt) in sorted(bands.items())
         }
         # 3. Detector, with and without game length (length is partly a matter of
