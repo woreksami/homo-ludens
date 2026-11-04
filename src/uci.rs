@@ -192,6 +192,11 @@ impl Engine {
                     println!("bestmove {}", m.uci());
                 }
                 "d" => println!("{}", self.board),
+                // Non-standard: static evaluation, White's point of view, and its concepts.
+                "eval" => {
+                    let bd = crate::eval::breakdown(&self.board);
+                    println!("eval {} {:?}", bd.total(), bd.terms);
+                }
                 // Non-standard: score every legal move, for fitting human models.
                 // `evalmoves [depth]` -> `evalmoves e2e4:31 d2d4:28 ...` (side to move's view, cp)
                 "evalmoves" => {

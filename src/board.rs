@@ -48,7 +48,7 @@ pub fn rank_of(sq: u8) -> i8 {
     (sq >> 3) as i8
 }
 #[inline]
-fn sq_at(file: i8, rank: i8) -> Option<u8> {
+pub fn sq_at(file: i8, rank: i8) -> Option<u8> {
     if (0..8).contains(&file) && (0..8).contains(&rank) {
         Some((rank * 8 + file) as u8)
     } else {

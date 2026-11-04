@@ -143,7 +143,9 @@ impl Searcher {
         if b.is_capture(m) {
             let victim = PIECE_VALUE[b.captured_type(m) as usize];
             let attacker = PIECE_VALUE[piece_type(b.sq[m.from as usize]) as usize];
-            return 100_000 + victim * 10 - attacker / 10;
+            // Winning or even exchanges first; losing ones after the quiet killers.
+            let base = if attacker <= victim || crate::see::see(b, m) >= 0 { 100_000 } else { 60_000 };
+            return base + victim * 10 - attacker / 10;
         }
         if m.promo == QUEEN {
             return 90_000;
@@ -194,6 +196,10 @@ impl Searcher {
                 if stand + gain + 200 < alpha {
                     continue;
                 }
+                // Captures that lose material in the exchange are not worth a look.
+                if PIECE_VALUE[piece_type(b.sq[m.from as usize]) as usize] > gain && crate::see::see(b, m) < 0 {
+                    continue;
+                }
             }
             let score = -self.quiesce(&b.make(m), -beta, -alpha, ply + 1);
             if score > best {
@@ -240,10 +246,17 @@ impl Searcher {
             }
         }
 
+        let static_eval = if in_check { -INF } else { eval::evaluate(b) };
+
+        // Reverse futility: far above beta at low depth, the opponent will not come back.
+        if !pv_node && !in_check && depth <= 6 && !is_mate_score(beta) && static_eval - 85 * depth >= beta {
+            return static_eval;
+        }
+
         // Null-move pruning (not in check, not in pawn-only endings).
         if allow_null && !pv_node && !in_check && depth >= 3 && has_non_pawn_material(b) {
-            if eval::evaluate(b) >= beta {
-                let r = 2 + depth / 4;
+            if static_eval >= beta {
+                let r = 3 + depth / 4 + ((static_eval - beta) / 200).min(2);
                 self.rep.push(b.hash);
                 let s = -self.negamax(&b.make_null(), depth - 1 - r, -beta, -beta + 1, ply + 1, false);
                 self.rep.pop();
@@ -263,18 +276,48 @@ impl Searcher {
         let mut best = -INF;
         let mut best_move = moves[0];
         self.rep.push(b.hash);
+        let mut quiets_tried: Vec<Move> = Vec::new();
         for (i, &m) in moves.iter().enumerate() {
-            let child = b.make(m);
             let quiet = !b.is_capture(m) && m.promo == 0;
+            let is_killer = ply < MAX_PLY && (m == self.killers[ply][0] || m == self.killers[ply][1]);
+            // Prune quiet moves that cannot matter, once a real move has been searched.
+            if quiet && i > 0 && !in_check && !pv_node && !is_mate_score(alpha) && best > -MATE + 1000 {
+                // Late-move pruning: at low depth, late quiet moves are rarely best.
+                if depth <= 4 && i as i32 >= 3 + depth * depth * 2 {
+                    continue;
+                }
+                // Futility: even a good quiet move cannot lift a hopeless eval to alpha.
+                if depth <= 3 && static_eval + 90 + 110 * depth <= alpha && !is_killer {
+                    let child = b.make(m);
+                    if !child.in_check() {
+                        continue;
+                    }
+                }
+            }
+            let child = b.make(m);
             let gives_check = child.in_check();
             let mut score;
+            if quiet {
+                quiets_tried.push(m);
+            }
             if i == 0 {
                 score = -self.negamax(&child, depth - 1, -beta, -alpha, ply + 1, true);
             } else {
-                // Late-move reduction for quiet, late, non-checking moves.
+                // Late-move reduction, logarithmic in depth and move number.
                 let mut r = 0;
-                if depth >= 3 && i >= 3 && quiet && !in_check && !gives_check {
-                    r = 1 + (i as i32 / 8).min(2);
+                if depth >= 3 && i >= 2 && quiet && !gives_check {
+                    let lr = 0.75 + (depth as f32).ln() * (i as f32).ln() / 2.3;
+                    r = lr as i32;
+                    if pv_node {
+                        r -= 1;
+                    }
+                    if is_killer {
+                        r -= 1;
+                    }
+                    if in_check {
+                        r -= 1;
+                    }
+                    r = r.clamp(0, depth - 2);
                 }
                 score = -self.negamax(&child, depth - 1 - r, -alpha - 1, -alpha, ply + 1, true);
                 if score > alpha && r > 0 {
@@ -300,8 +343,14 @@ impl Searcher {
                             self.killers[ply][1] = self.killers[ply][0];
                             self.killers[ply][0] = m;
                         }
+                        let bonus = depth * depth;
                         let h = &mut self.history[m.from as usize][m.to as usize];
-                        *h = (*h + depth * depth).min(50_000);
+                        *h = (*h + bonus).min(50_000);
+                        // Quiet moves tried before the cutoff did not work here.
+                        for &q in quiets_tried.iter().filter(|&&q| q != m) {
+                            let h = &mut self.history[q.from as usize][q.to as usize];
+                            *h = (*h - bonus).max(-50_000);
+                        }
                     }
                     break;
                 }
@@ -372,31 +421,59 @@ impl Searcher {
             root = ordered;
             scores = prev;
 
-            let mut alpha = -INF;
-            let beta = INF;
-            let mut best_i = 0;
-            self.rep.push(b.hash);
-            for (i, &m) in root.iter().enumerate() {
-                let child = b.make(m);
-                let mut s;
-                if i == 0 {
-                    s = -self.negamax(&child, depth - 1, -beta, -alpha, 1, true);
-                } else {
-                    s = -self.negamax(&child, depth - 1, -alpha - 1, -alpha, 1, true);
-                    if s > alpha && !self.stopped {
+            // Aspiration window around the previous score; widen on failure.
+            let mut window = if depth >= 5 && !is_mate_score(result.score) { 35 } else { INF };
+            let (mut lo, mut hi) = (result.score.saturating_sub(window).max(-INF), result.score.saturating_add(window).min(INF));
+            let mut alpha;
+            let mut best_i;
+            loop {
+                alpha = lo;
+                best_i = 0;
+                let beta = hi;
+                let mut any_above = false;
+                self.rep.push(b.hash);
+                for (i, &m) in root.iter().enumerate() {
+                    let child = b.make(m);
+                    let mut s;
+                    if i == 0 {
                         s = -self.negamax(&child, depth - 1, -beta, -alpha, 1, true);
+                    } else {
+                        s = -self.negamax(&child, depth - 1, -alpha - 1, -alpha, 1, true);
+                        if s > alpha && s < beta && !self.stopped {
+                            s = -self.negamax(&child, depth - 1, -beta, -alpha, 1, true);
+                        }
+                    }
+                    if self.stopped {
+                        break;
+                    }
+                    scores[i] = s;
+                    if s > alpha {
+                        alpha = s;
+                        best_i = i;
+                        any_above = true;
+                    }
+                    if alpha >= beta {
+                        break;
                     }
                 }
-                if self.stopped {
+                self.rep.pop();
+                if self.stopped || window >= INF {
                     break;
                 }
-                scores[i] = s;
-                if s > alpha {
-                    alpha = s;
-                    best_i = i;
+                if !any_above {
+                    lo = (lo - window * 3).max(-INF);
+                } else if alpha >= hi {
+                    hi = (hi + window * 3).min(INF);
+                } else {
+                    break;
+                }
+                window *= 3;
+                if window > 1000 {
+                    lo = -INF;
+                    hi = INF;
+                    window = INF;
                 }
             }
-            self.rep.pop();
             if self.stopped && depth > 1 {
                 break;
             }

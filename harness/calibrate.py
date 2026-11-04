@@ -82,6 +82,7 @@ def main():
     ap.add_argument("--settings", default="800,1200,1600,2000,2400")
     ap.add_argument("--per-band", type=int, default=60)
     ap.add_argument("--nodes", type=int, default=30000)
+    ap.add_argument("--movetime", type=int, default=200, help="real compute per move, ms")
     ap.add_argument("--raw", action="store_true", help="settings are internal skill, not calibrated ratings")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--cache", type=Path, default=Path("reports/calib_cache.json"))
@@ -98,7 +99,7 @@ def main():
         out = []
         for i, (_, start, moves, _, _) in enumerate(pos):
             e.set_option("Seed", 1 + i)
-            out.append(e.play(start, moves, go="movetime 200").move)
+            out.append(e.play(start, moves, go=f"movetime {args.movetime}").move)
         e.close()
         return setting, out
 

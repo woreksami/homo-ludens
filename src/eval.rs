@@ -53,116 +53,47 @@ impl Breakdown {
     }
 }
 
-// Tables are written rank 8 first (as seen from White). Index for a White
-// piece on `sq` is (7 - rank) * 8 + file; for Black it is rank * 8 + file.
-#[rustfmt::skip]
-const PST_PAWN: [i32; 64] = [
-     0,  0,  0,  0,  0,  0,  0,  0,
-    50, 50, 50, 50, 50, 50, 50, 50,
-    10, 10, 20, 30, 30, 20, 10, 10,
-     5,  5, 10, 25, 25, 10,  5,  5,
-     0,  0,  0, 20, 20,  0,  0,  0,
-     5, -5,-10,  0,  0,-10, -5,  5,
-     5, 10, 10,-20,-20, 10, 10,  5,
-     0,  0,  0,  0,  0,  0,  0,  0,
-];
-#[rustfmt::skip]
-const PST_KNIGHT: [i32; 64] = [
-   -50,-40,-30,-30,-30,-30,-40,-50,
-   -40,-20,  0,  0,  0,  0,-20,-40,
-   -30,  0, 10, 15, 15, 10,  0,-30,
-   -30,  5, 15, 20, 20, 15,  5,-30,
-   -30,  0, 15, 20, 20, 15,  0,-30,
-   -30,  5, 10, 15, 15, 10,  5,-30,
-   -40,-20,  0,  5,  5,  0,-20,-40,
-   -50,-40,-30,-30,-30,-30,-40,-50,
-];
-#[rustfmt::skip]
-const PST_BISHOP: [i32; 64] = [
-   -20,-10,-10,-10,-10,-10,-10,-20,
-   -10,  0,  0,  0,  0,  0,  0,-10,
-   -10,  0,  5, 10, 10,  5,  0,-10,
-   -10,  5,  5, 10, 10,  5,  5,-10,
-   -10,  0, 10, 10, 10, 10,  0,-10,
-   -10, 10, 10, 10, 10, 10, 10,-10,
-   -10,  5,  0,  0,  0,  0,  5,-10,
-   -20,-10,-10,-10,-10,-10,-10,-20,
-];
-#[rustfmt::skip]
-const PST_ROOK: [i32; 64] = [
-     0,  0,  0,  0,  0,  0,  0,  0,
-     5, 10, 10, 10, 10, 10, 10,  5,
-    -5,  0,  0,  0,  0,  0,  0, -5,
-    -5,  0,  0,  0,  0,  0,  0, -5,
-    -5,  0,  0,  0,  0,  0,  0, -5,
-    -5,  0,  0,  0,  0,  0,  0, -5,
-    -5,  0,  0,  0,  0,  0,  0, -5,
-     0,  0,  0,  5,  5,  0,  0,  0,
-];
-#[rustfmt::skip]
-const PST_QUEEN: [i32; 64] = [
-   -20,-10,-10, -5, -5,-10,-10,-20,
-   -10,  0,  0,  0,  0,  0,  0,-10,
-   -10,  0,  5,  5,  5,  5,  0,-10,
-    -5,  0,  5,  5,  5,  5,  0, -5,
-     0,  0,  5,  5,  5,  5,  0, -5,
-   -10,  5,  5,  5,  5,  5,  0,-10,
-   -10,  0,  5,  0,  0,  0,  0,-10,
-   -20,-10,-10, -5, -5,-10,-10,-20,
-];
-#[rustfmt::skip]
-const PST_KING_MG: [i32; 64] = [
-   -30,-40,-40,-50,-50,-40,-40,-30,
-   -30,-40,-40,-50,-50,-40,-40,-30,
-   -30,-40,-40,-50,-50,-40,-40,-30,
-   -30,-40,-40,-50,-50,-40,-40,-30,
-   -20,-30,-30,-40,-40,-30,-30,-20,
-   -10,-20,-20,-20,-20,-20,-20,-10,
-    20, 20,  0,  0,  0,  0, 20, 20,
-    20, 30, 10,  0,  0, 10, 30, 20,
-];
-#[rustfmt::skip]
-const PST_KING_EG: [i32; 64] = [
-   -50,-40,-30,-20,-20,-30,-40,-50,
-   -30,-20,-10,  0,  0,-10,-20,-30,
-   -30,-10, 20, 30, 30, 20,-10,-30,
-   -30,-10, 30, 40, 40, 30,-10,-30,
-   -30,-10, 30, 40, 40, 30,-10,-30,
-   -30,-10, 20, 30, 30, 20,-10,-30,
-   -30,-30,  0,  0,  0,  0,-30,-30,
-   -50,-30,-30,-30,-30,-30,-30,-50,
-];
+use crate::eval_params::*;
 
-const PASSED_BONUS: [i32; 8] = [0, 5, 10, 20, 35, 60, 100, 0];
 const PHASE_WEIGHT: [i32; 7] = [0, 0, 1, 1, 2, 4, 0];
 const MAX_PHASE: i32 = 24;
-
-#[inline]
-fn pst_index(color: u8, sq: u8) -> usize {
-    let (f, r) = (file_of(sq) as usize, rank_of(sq) as usize);
-    if color == WHITE {
-        (7 - r) * 8 + f
-    } else {
-        r * 8 + f
-    }
-}
 
 /// 0 = pure endgame, MAX_PHASE = full middlegame.
 pub fn game_phase(b: &Board) -> i32 {
     b.sq.iter().map(|&p| PHASE_WEIGHT[piece_type(p) as usize]).sum::<i32>().min(MAX_PHASE)
 }
 
-#[inline]
-fn taper(mg: i32, eg: i32, phase: i32) -> i32 {
-    (mg * phase + eg * (MAX_PHASE - phase)) / MAX_PHASE
+/// Middlegame and endgame accumulators for one concept.
+#[derive(Clone, Copy, Default)]
+struct Acc {
+    mg: i32,
+    eg: i32,
+}
+
+impl Acc {
+    #[inline]
+    fn add(&mut self, sign: i32, n: i32, w: (i32, i32)) {
+        self.mg += sign * n * w.0;
+        self.eg += sign * n * w.1;
+    }
+    #[inline]
+    fn taper(self, phase: i32) -> i32 {
+        (self.mg * phase + self.eg * (MAX_PHASE - phase)) / MAX_PHASE
+    }
 }
 
 /// Full evaluation broken down by concept (White's point of view).
+///
+/// The terms and weights mirror harness/texel/features.py; the weights in
+/// `eval_params` are tuned on master games.
 pub fn breakdown(b: &Board) -> Breakdown {
-    let mut t = [0i32; N_CONCEPTS];
     let phase = game_phase(b);
+    let mut acc = [Acc::default(); N_CONCEPTS];
+    // The king's square table counts as piece placement in the middlegame
+    // and as king activity in the endgame.
+    let mut king_pst_mg = 0;
+    let mut king_pst_eg = 0;
 
-    // Pawn files per color, for structure, passers and rook files.
     let mut pawn_files = [[0u8; 8]; 2];
     for s in 0..64u8 {
         let p = b.sq[s as usize];
@@ -170,7 +101,6 @@ pub fn breakdown(b: &Board) -> Breakdown {
             pawn_files[piece_color(p) as usize][file_of(s) as usize] += 1;
         }
     }
-
     let mut bishops = [0; 2];
 
     for s in 0..64u8 {
@@ -181,69 +111,75 @@ pub fn breakdown(b: &Board) -> Breakdown {
         let c = piece_color(p);
         let sign = if c == WHITE { 1 } else { -1 };
         let kind = piece_type(p);
-        let idx = pst_index(c, s);
+        let k = (kind - 1) as usize;
+        let rel = if c == WHITE { s } else { s ^ 56 } as usize;
+        let (f, r) = (file_of(s), rank_of(s));
 
-        t[Concept::Material as usize] += sign * PIECE_VALUE[kind as usize];
-
+        if kind != KING {
+            acc[Concept::Material as usize].add(sign, 1, (MAT_MG[k], MAT_EG[k]));
+            acc[Concept::PieceSquares as usize].add(sign, 1, (PST_MG[k][rel], PST_EG[k][rel]));
+        }
         match kind {
             PAWN => {
-                t[Concept::PieceSquares as usize] += sign * PST_PAWN[idx];
-                let f = file_of(s) as usize;
-                let rel_rank = if c == WHITE { rank_of(s) } else { 7 - rank_of(s) } as usize;
-                let n = pawn_files[c as usize][f] as i32;
-                if n > 1 {
-                    // Each extra pawn on a file costs 15; spread across the pawns there.
-                    t[Concept::PawnStructure as usize] -= sign * 15 * (n - 1) / n;
-                }
-                let left = if f > 0 { pawn_files[c as usize][f - 1] } else { 0 };
-                let right = if f < 7 { pawn_files[c as usize][f + 1] } else { 0 };
+                let fu = f as usize;
+                let left = if fu > 0 { pawn_files[c as usize][fu - 1] } else { 0 };
+                let right = if fu < 7 { pawn_files[c as usize][fu + 1] } else { 0 };
                 if left == 0 && right == 0 {
-                    t[Concept::PawnStructure as usize] -= sign * 12;
+                    acc[Concept::PawnStructure as usize].add(sign, 1, ISOLATED);
                 }
                 if is_passed(b, s, c) {
-                    let bonus = PASSED_BONUS[rel_rank];
-                    t[Concept::PassedPawns as usize] += sign * taper(bonus * 6 / 10, bonus * 12 / 10, phase);
+                    let rr = if c == WHITE { r } else { 7 - r };
+                    if (1..=6).contains(&rr) {
+                        let i = (rr - 1) as usize;
+                        acc[Concept::PassedPawns as usize].add(sign, 1, (PASSED_MG[i], PASSED_EG[i]));
+                    }
                 }
             }
             KNIGHT => {
-                t[Concept::PieceSquares as usize] += sign * PST_KNIGHT[idx];
-                let mob = knight_targets(s).iter().filter(|&&q| own_free(b, q, c)).count() as i32;
-                t[Concept::Mobility as usize] += sign * 4 * (mob - 4);
+                let n = knight_targets(s).iter().filter(|&&q| own_free(b, q, c)).count() as i32;
+                acc[Concept::Mobility as usize].add(sign, n, (MOB_MG[0], MOB_EG[0]));
             }
             BISHOP => {
                 bishops[c as usize] += 1;
-                t[Concept::PieceSquares as usize] += sign * PST_BISHOP[idx];
-                t[Concept::Mobility as usize] += sign * 5 * (slider_mobility(b, s, c, &BISHOP_D) - 6);
+                acc[Concept::Mobility as usize].add(sign, slider_mobility(b, s, c, &BISHOP_D), (MOB_MG[1], MOB_EG[1]));
             }
             ROOK => {
-                t[Concept::PieceSquares as usize] += sign * PST_ROOK[idx];
-                t[Concept::Mobility as usize] += sign * 2 * (slider_mobility(b, s, c, &ROOK_D) - 7);
-                let f = file_of(s) as usize;
-                if pawn_files[c as usize][f] == 0 {
-                    t[Concept::RookFiles as usize] += sign * if pawn_files[(c ^ 1) as usize][f] == 0 { 20 } else { 10 };
+                acc[Concept::Mobility as usize].add(sign, slider_mobility(b, s, c, &ROOK_D), (MOB_MG[2], MOB_EG[2]));
+                let fu = f as usize;
+                if pawn_files[c as usize][fu] == 0 {
+                    let w = if pawn_files[(c ^ 1) as usize][fu] == 0 { ROOK_OPEN } else { ROOK_HALF_OPEN };
+                    acc[Concept::RookFiles as usize].add(sign, 1, w);
                 }
             }
             QUEEN => {
-                t[Concept::PieceSquares as usize] += sign * PST_QUEEN[idx];
                 let m = slider_mobility(b, s, c, &BISHOP_D) + slider_mobility(b, s, c, &ROOK_D);
-                t[Concept::Mobility as usize] += sign * (m - 13);
+                acc[Concept::Mobility as usize].add(sign, m, (MOB_MG[3], MOB_EG[3]));
             }
             KING => {
-                t[Concept::PieceSquares as usize] += sign * taper(PST_KING_MG[idx], 0, phase);
-                t[Concept::KingActivity as usize] += sign * taper(0, PST_KING_EG[idx], phase);
-                t[Concept::KingSafety as usize] += sign * taper(king_safety(b, s, c, &pawn_files), 0, phase);
+                king_pst_mg += sign * PST_MG[5][rel];
+                king_pst_eg += sign * PST_EG[5][rel];
+                king_safety(b, s, c, &pawn_files, sign, &mut acc[Concept::KingSafety as usize]);
             }
             _ => {}
         }
     }
-
-    if bishops[0] >= 2 {
-        t[Concept::BishopPair as usize] += 30;
+    for c in [WHITE, BLACK] {
+        let sign = if c == WHITE { 1 } else { -1 };
+        let extra: i32 = pawn_files[c as usize].iter().map(|&n| (n as i32 - 1).max(0)).sum();
+        if extra > 0 {
+            acc[Concept::PawnStructure as usize].add(sign, extra, DOUBLED);
+        }
+        if bishops[c as usize] >= 2 {
+            acc[Concept::BishopPair as usize].add(sign, 1, BISHOP_PAIR);
+        }
     }
-    if bishops[1] >= 2 {
-        t[Concept::BishopPair as usize] -= 30;
-    }
 
+    let mut t = [0i32; N_CONCEPTS];
+    for (i, a) in acc.iter().enumerate() {
+        t[i] = a.taper(phase);
+    }
+    t[Concept::PieceSquares as usize] += king_pst_mg * phase / MAX_PHASE;
+    t[Concept::KingActivity as usize] += king_pst_eg * (MAX_PHASE - phase) / MAX_PHASE;
     Breakdown { terms: t }
 }
 
@@ -290,8 +226,8 @@ pub fn is_passed(b: &Board, s: u8, c: u8) -> bool {
         if !(0..8).contains(&ff) {
             continue;
         }
-        let ranks: Vec<i8> = if c == WHITE { (r + 1..8).collect() } else { (0..r).collect() };
-        for rr in ranks {
+        let (lo, hi) = if c == WHITE { (r + 1, 8) } else { (0, r) };
+        for rr in lo..hi {
             if b.sq[(rr * 8 + ff) as usize] == enemy {
                 return false;
             }
@@ -300,13 +236,11 @@ pub fn is_passed(b: &Board, s: u8, c: u8) -> bool {
     true
 }
 
-fn king_safety(b: &Board, k: u8, c: u8, pawn_files: &[[u8; 8]; 2]) -> i32 {
-    let mut score = 0;
+fn king_safety(b: &Board, k: u8, c: u8, pawn_files: &[[u8; 8]; 2], sign: i32, acc: &mut Acc) {
     let f = file_of(k);
     let r = rank_of(k);
     let fwd: i8 = if c == WHITE { 1 } else { -1 };
     let own_pawn = make_piece(c, PAWN);
-    // Pawn shield: own pawns one or two ranks in front of the king.
     for df in -1..=1i8 {
         let ff = f + df;
         if !(0..8).contains(&ff) {
@@ -315,23 +249,16 @@ fn king_safety(b: &Board, k: u8, c: u8, pawn_files: &[[u8; 8]; 2]) -> i32 {
         for dist in 1..=2i8 {
             let rr = r + fwd * dist;
             if (0..8).contains(&rr) && b.sq[(rr * 8 + ff) as usize] == own_pawn {
-                score += if dist == 1 { 12 } else { 6 };
+                acc.add(sign, 1, if dist == 1 { SHIELD1 } else { SHIELD2 });
                 break;
             }
         }
         if pawn_files[c as usize][ff as usize] == 0 {
-            score -= 15; // open or half-open file next to the king
+            acc.add(sign, 1, KING_OPEN_FILE);
         }
     }
-    // Enemy pieces attacking the squares around the king.
-    let mut attacked = 0;
-    for &q in king_targets(k) {
-        if b.attacked(q, c ^ 1) {
-            attacked += 1;
-        }
-    }
-    score -= attacked * attacked * 4;
-    score
+    let attacked = king_targets(k).iter().filter(|&&q| b.attacked(q, c ^ 1)).count() as i32;
+    acc.add(sign, attacked * attacked, KING_ATTACK);
 }
 
 #[cfg(test)]
