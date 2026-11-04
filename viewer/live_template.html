@@ -1,0 +1,293 @@
+<title>Homo Ludens Live</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;1,8..60,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: tournament broadcast. Board + clocks on the left, the player's running inner monologue on the right, scoresheet below. */
+:root {
+  --bg: #e9ecef;
+  --panel: #f7f8f9;
+  --ink: #1d2329;
+  --muted: #5d6a75;
+  --line: #ccd3d9;
+  --sq-light: #ebecd0;
+  --sq-dark: #739552;
+  --last-light: #f5f682;
+  --last-dark: #b9ca43;
+  --clock: #e8b03a;
+  --clock-ink: #1d2329;
+  --think: #2f6f8f;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --mind: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14191d; --panel: #1c2328; --ink: #e6eaed; --muted: #94a3ae; --line: #2e3840;
+    --sq-light: #ebecd0; --sq-dark: #739552; --last-light: #f5f682; --last-dark: #b9ca43;
+    --clock: #e8b03a; --clock-ink: #14191d; --think: #6fb3d2; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14191d; --panel: #1c2328; --ink: #e6eaed; --muted: #94a3ae; --line: #2e3840;
+  --sq-light: #ebecd0; --sq-dark: #739552; --last-light: #f5f682; --last-dark: #b9ca43;
+  --clock: #e8b03a; --clock-ink: #14191d; --think: #6fb3d2; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--display); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px 20px; }
+h1 { font-size: 1.6rem; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+h1 small { font-weight: 500; color: var(--muted); font-size: 0.95rem; margin-left: 8px; }
+.games { display: flex; flex-wrap: wrap; gap: 6px; }
+.games button { font: 500 0.85rem var(--display); background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+.games button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.main { display: grid; grid-template-columns: minmax(0, 460px) minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 820px) { .main { grid-template-columns: minmax(0, 1fr); } }
+.stage { display: grid; gap: 8px; }
+.player { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.player .name { font-weight: 600; font-size: 0.95rem; }
+.player .name span { color: var(--muted); font-weight: 500; }
+.clock { font: 600 1.25rem var(--mono); font-variant-numeric: tabular-nums; padding: 4px 12px; border-radius: 6px;
+  background: var(--panel); border: 1px solid var(--line); min-width: 92px; text-align: center; }
+.clock.on { background: var(--clock); color: var(--clock-ink); border-color: var(--clock); }
+.clock.low { outline: 2px solid #c8483a; }
+.board { display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); width: 100%; max-width: 460px; aspect-ratio: 1; border-radius: 4px; overflow: hidden;
+  box-shadow: 0 1px 0 var(--line), 0 6px 24px rgba(0, 0, 0, 0.12); user-select: none; }
+.sq { position: relative; min-width: 0; min-height: 0; }
+.sq.l { background: var(--sq-light); } .sq.d { background: var(--sq-dark); }
+.sq.l.hl { background: var(--last-light); } .sq.d.hl { background: var(--last-dark); }
+.pc { position: absolute; inset: 0; z-index: 1; background-size: 100% 100%; background-repeat: no-repeat; }
+/*PIECES*/
+.coord { position: absolute; font: 700 clamp(8px, 2vw, 12px) var(--display); z-index: 2; }
+.sq.l .coord { color: var(--sq-dark); } .sq.d .coord { color: var(--sq-light); }
+.coord.f { right: 3px; bottom: 2px; } .coord.r { left: 3px; top: 2px; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.controls button, .controls select { font: 500 0.85rem var(--display); background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+.controls button:focus-visible, .games button:focus-visible, .sheet button:focus-visible { outline: 2px solid var(--think); outline-offset: 2px; }
+.controls .grow { flex: 1; }
+.status { font: 0.8rem var(--mono); color: var(--muted); }
+.mind { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; min-height: 360px;
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.mind h2 { margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.mind h2 .who { color: var(--think); }
+.thoughts { font-family: var(--mind); font-size: 1.02rem; line-height: 1.55; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.thoughts p { margin: 0; }
+.thoughts p.sub { padding-left: 1.2em; color: var(--muted); font-size: 0.95rem; }
+.thoughts p.final { font-style: italic; color: var(--think); margin-top: 4px; }
+.thoughts p.new { animation: in 0.35s ease-out; }
+@keyframes in { from { opacity: 0.2; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.dots::after { content: "…"; animation: blink 1.2s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0.2; } }
+@media (prefers-reduced-motion: reduce) { .thoughts p.new, .dots::after { animation: none; } }
+.sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.sheet h2 { margin: 0 0 8px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.moves { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 2px 14px; font: 0.85rem var(--mono); font-variant-numeric: tabular-nums; }
+.mv { display: grid; grid-template-columns: 2.4em 1fr 1fr; gap: 6px; align-items: center; }
+.mv .no { color: var(--muted); }
+.sheet button { font: inherit; background: none; border: 0; color: var(--ink); text-align: left; padding: 1px 3px; border-radius: 3px; cursor: pointer;
+  display: flex; align-items: center; gap: 5px; min-width: 0; }
+.sheet button.cur { background: var(--clock); color: var(--clock-ink); }
+.sheet button.future { color: var(--muted); opacity: 0.45; }
+.bar { height: 4px; background: var(--think); border-radius: 2px; opacity: 0.7; flex: none; }
+.note { font-size: 0.8rem; color: var(--muted); max-width: 70ch; line-height: 1.5; margin: 0; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Homo Ludens Live <small id="sub"></small></h1>
+    <div class="games" id="games" role="group" aria-label="Choose a game"></div>
+  </header>
+  <div class="main">
+    <div class="stage">
+      <div class="player"><div class="name" id="topName"></div><div class="clock" id="topClock">0:00</div></div>
+      <div class="board" id="board" aria-label="Chess board"></div>
+      <div class="player"><div class="name" id="botName"></div><div class="clock" id="botClock">0:00</div></div>
+      <div class="controls">
+        <button id="play" type="button">Pause</button>
+        <button id="back" type="button" aria-label="Previous move">◀</button>
+        <button id="fwd" type="button" aria-label="Next move">▶</button>
+        <label class="status" for="speed">Speed</label>
+        <select id="speed">
+          <option value="1" selected>1× real time</option>
+          <option value="2">2×</option>
+          <option value="5">5×</option>
+          <option value="20">20×</option>
+        </select>
+        <span class="grow"></span>
+        <span class="status" id="status"></span>
+      </div>
+    </div>
+    <section class="mind" aria-live="polite">
+      <h2><span>Inside its head</span><span class="who" id="who"></span></h2>
+      <div class="thoughts" id="thoughts"></div>
+    </section>
+  </div>
+  <section class="sheet">
+    <h2>Scoresheet · bar = time spent</h2>
+    <div class="moves" id="moves"></div>
+  </section>
+  <p class="note">Homo Ludens playing itself on a simulated clock. At 1× you see each move after exactly the time it chose to spend; the faster speeds compress that. Its moves, think times and thoughts were recorded live on the engine; this page replays them at the pace it played. Every line on the right is the engine's own trace: what it noticed, which moves it considered, how deep it calculated, its blunder check, and the time it chose to spend. Pieces: cburnett set by Colin M.L. Burnett, CC BY-SA 3.0.</p>
+</div>
+
+<script>
+const GAMES = /*GAMES*/[];
+const NAMES = { k: "king", q: "queen", r: "rook", b: "bishop", n: "knight", p: "pawn" };
+const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+const $ = (id) => document.getElementById(id);
+let game = 0, ply = 0, playing = true, speed = 1, timer = null, thinkStart = 0, thinkTimers = [];
+
+function fmtClock(s) {
+  s = Math.max(0, s);
+  if (s < 10) return "0:0" + s.toFixed(1);
+  const m = Math.floor(s / 60), r = Math.floor(s % 60);
+  return m + ":" + String(r).padStart(2, "0");
+}
+function squareName(i) { return "abcdefgh"[i % 8] + (8 - Math.floor(i / 8)); }
+function drawBoard(fen, last) {
+  const rows = fen.split(" ")[0].split("/");
+  const cells = [];
+  rows.forEach((row) => { for (const ch of row) { if (/\d/.test(ch)) for (let k = 0; k < +ch; k++) cells.push(null); else cells.push(ch); } });
+  const hl = last ? [last.slice(0, 2), last.slice(2, 4)] : [];
+  const b = $("board");
+  b.innerHTML = "";
+  cells.forEach((c, i) => {
+    const d = document.createElement("div");
+    const light = (Math.floor(i / 8) + (i % 8)) % 2 === 0;
+    d.className = "sq " + (light ? "l" : "d") + (hl.includes(squareName(i)) ? " hl" : "");
+    if (c) { const s = document.createElement("span"); s.className = "pc " + (c === c.toUpperCase() ? "w" : "b") + c.toLowerCase(); s.setAttribute("role", "img"); s.setAttribute("aria-label", (c === c.toUpperCase() ? "white " : "black ") + NAMES[c.toLowerCase()]); d.appendChild(s); }
+    if (i >= 56) { const f = document.createElement("span"); f.className = "coord f"; f.textContent = "abcdefgh"[i % 8]; d.appendChild(f); }
+    if (i % 8 === 0) { const r = document.createElement("span"); r.className = "coord r"; r.textContent = 8 - Math.floor(i / 8); d.appendChild(r); }
+    b.appendChild(d);
+  });
+}
+function clocksBefore(g, n) {
+  const c = { w: g.base, b: g.base };
+  for (let i = 0; i < n && i < g.plies.length; i++) if (g.plies[i].clock !== undefined) c[i % 2 === 0 ? "w" : "b"] = g.plies[i].clock;
+  return c;
+}
+function setClocks(c, active) {
+  $("botClock").textContent = fmtClock(c.w); $("topClock").textContent = fmtClock(c.b);
+  $("botClock").className = "clock" + (active === "w" ? " on" : "") + (c.w < 10 ? " low" : "");
+  $("topClock").className = "clock" + (active === "b" ? " on" : "") + (c.b < 10 ? " low" : "");
+}
+function cleanTrace(t) { return t.filter((x) => !x.startsWith("Playing as")); }
+function renderThoughts(lines, upto, thinking) {
+  const box = $("thoughts");
+  box.innerHTML = "";
+  lines.slice(0, upto).forEach((x, i) => {
+    const p = document.createElement("p");
+    if (x.startsWith("  ")) p.className = "sub";
+    if (/^Play .* after about/.test(x) || x.includes("I resign") || x.startsWith("I know this position")) p.classList.add("final");
+    if (i === upto - 1) p.classList.add("new");
+    p.textContent = x.trim();
+    box.appendChild(p);
+  });
+  if (thinking) { const p = document.createElement("p"); p.className = "dots"; p.textContent = "thinking"; box.appendChild(p); }
+}
+function renderSheet() {
+  const g = GAMES[game], box = $("moves");
+  box.innerHTML = "";
+  const maxT = Math.max(1, ...g.plies.map((p) => p.think || 0));
+  for (let i = 0; i < g.plies.length; i += 2) {
+    const row = document.createElement("div"); row.className = "mv";
+    const no = document.createElement("span"); no.className = "no"; no.textContent = i / 2 + 1 + "."; row.appendChild(no);
+    for (const j of [i, i + 1]) {
+      const p = g.plies[j];
+      const btn = document.createElement("button"); btn.type = "button";
+      if (p) {
+        btn.className = j === ply - 1 ? "cur" : j >= ply ? "future" : "";
+        const label = p.san || (p.resign ? "resigns" : p.flag ? "flag falls" : "");
+        const bar = document.createElement("span"); bar.className = "bar"; bar.style.width = Math.max(2, 34 * (p.think || 0) / maxT) + "px";
+        btn.append(label, bar);
+        btn.title = (p.think || 0).toFixed(1) + " s";
+        btn.addEventListener("click", () => jump(j + 1));
+      }
+      row.appendChild(btn);
+    }
+    box.appendChild(row);
+  }
+}
+function showPosition(n) {
+  const g = GAMES[game];
+  const p = n > 0 ? g.plies[n - 1] : null;
+  const fen = p && p.fen ? p.fen : (n > 1 ? g.plies[n - 2].fen : START);
+  drawBoard(fen || START, p && p.uci);
+  setClocks(clocksBefore(g, n), null);
+  $("status").textContent = n >= g.plies.length ? "Result " + g.result + (g.termination === "Time forfeit" ? " (on time)" : "") : "Move " + Math.ceil((n + 1) / 2);
+}
+function clearTimers() { clearTimeout(timer); thinkTimers.forEach(clearTimeout); thinkTimers = []; cancelAnimationFrame(tick.raf); }
+function tick() {
+  const g = GAMES[game], p = g.plies[ply]; if (!p) return;
+  const side = ply % 2 === 0 ? "w" : "b";
+  const c = clocksBefore(g, ply);
+  const used = Math.min(p.think, (performance.now() - thinkStart) / 1000 * speed);
+  c[side] -= used;
+  setClocks(c, side);
+  tick.raf = requestAnimationFrame(tick);
+}
+function step() {
+  clearTimers();
+  const g = GAMES[game];
+  if (ply >= g.plies.length) { playing = false; $("play").textContent = "Replay"; return; }
+  const p = g.plies[ply];
+  const side = ply % 2 === 0 ? "White" : "Black";
+  $("who").textContent = side + " to move";
+  const lines = cleanTrace(p.trace);
+  const ms = Math.max(250, (p.think * 1000) / speed);
+  thinkStart = performance.now();
+  renderThoughts(lines, 0, true);
+  // Reveal the trace across the think time, the decision line last.
+  lines.forEach((_, i) => {
+    thinkTimers.push(setTimeout(() => renderThoughts(lines, i + 1, i + 1 < lines.length), (ms * (i + 1)) / (lines.length + 1)));
+  });
+  tick();
+  timer = setTimeout(() => {
+    cancelAnimationFrame(tick.raf);
+    ply += 1;
+    showPosition(ply);
+    renderThoughts(lines, lines.length, false);
+    renderSheet();
+    if (playing) timer = setTimeout(step, Math.max(250, 600 / Math.sqrt(speed)));
+  }, ms);
+}
+function jump(n) {
+  clearTimers();
+  ply = Math.max(0, Math.min(n, GAMES[game].plies.length));
+  showPosition(ply);
+  const p = GAMES[game].plies[ply - 1];
+  $("who").textContent = p ? (ply % 2 === 1 ? "White" : "Black") + " just moved" : "";
+  renderThoughts(p ? cleanTrace(p.trace) : [], p ? cleanTrace(p.trace).length : 0, false);
+  renderSheet();
+  if (playing) timer = setTimeout(step, 400);
+}
+function loadGame(i) {
+  game = i; ply = 0; playing = true; $("play").textContent = "Pause";
+  const g = GAMES[i];
+  $("sub").textContent = g.elo + "-rated · " + g.tc;
+  $("botName").innerHTML = "White <span>· Homo Ludens " + g.elo + "</span>";
+  $("topName").innerHTML = "Black <span>· Homo Ludens " + g.elo + "</span>";
+  [...$("games").children].forEach((b, k) => b.setAttribute("aria-pressed", k === i ? "true" : "false"));
+  jump(0);
+}
+GAMES.forEach((g, i) => {
+  const b = document.createElement("button"); b.type = "button";
+  b.textContent = g.elo + " · " + g.tc + " · " + g.result;
+  b.addEventListener("click", () => loadGame(i));
+  $("games").appendChild(b);
+});
+$("play").addEventListener("click", () => {
+  if (ply >= GAMES[game].plies.length) { playing = true; $("play").textContent = "Pause"; jump(0); return; }
+  playing = !playing; $("play").textContent = playing ? "Pause" : "Play";
+  if (playing) step(); else { clearTimers(); showPosition(ply); }
+});
+$("back").addEventListener("click", () => { playing = false; $("play").textContent = "Play"; jump(ply - 1); });
+$("fwd").addEventListener("click", () => { playing = false; $("play").textContent = "Play"; jump(ply + 1); });
+$("speed").addEventListener("change", (e) => { speed = +e.target.value; });
+if (GAMES.length) loadGame(0);
+</script>
