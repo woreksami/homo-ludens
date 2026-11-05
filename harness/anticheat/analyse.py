@@ -36,7 +36,7 @@ def positions_of(pgn: Path, start_ply: int) -> list[str]:
 
 def _worker(job):
     sf_path, fens, nodes, multipv = job
-    eng = chess.engine.SimpleEngine.popen_uci(sf_path)
+    eng = chess.engine.SimpleEngine.popen_uci(sf_path, timeout=120)
     eng.configure({"Threads": 1, "Hash": 64})
     out = []
     for fen in fens:

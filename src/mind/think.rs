@@ -45,12 +45,15 @@ pub struct Mind<'a> {
     pub last_capture_sq: Option<u8>,
     /// Square the opponent's last move went to.
     pub last_to: Option<u8>,
+    /// Care multiplier for this move: players are careful when the game is balanced
+    /// and sloppier once it is decided (scaled error grows with the evaluation).
+    sloppy: f32,
     searcher: &'a mut Searcher,
 }
 
 impl<'a> Mind<'a> {
     pub fn new(persona: Persona, seed: u64, searcher: &'a mut Searcher) -> Mind<'a> {
-        Mind { persona, rng: Rng::new(seed), seed, nodes: 0, budget: 0, tc_scale: 1.0, clock: None, last_capture_sq: None, last_to: None, searcher }
+        Mind { persona, rng: Rng::new(seed), seed, nodes: 0, budget: 0, tc_scale: 1.0, clock: None, last_capture_sq: None, last_to: None, sloppy: 1.0, searcher }
     }
 
     /// How the position "feels" to this player, from the side to move's view.
@@ -62,7 +65,7 @@ impl<'a> Mind<'a> {
         w[eval::Concept::Material as usize] = 1.0;
         let mut v = bd.weighted(&w);
         let mut r = Rng::new(b.hash ^ self.seed.rotate_left(17));
-        v += (r.gauss() * self.persona.eval_noise_cp) as i32;
+        v += (r.gauss() * self.persona.eval_noise_cp * self.sloppy) as i32;
         if b.side == WHITE {
             v
         } else {
@@ -171,7 +174,7 @@ impl<'a> Mind<'a> {
 
         // Sample without replacement, softmax at the persona's temperature.
         let k = k.max(1).min(scored.len());
-        let temp = self.persona.intuition_temp.max(1.0);
+        let temp = (self.persona.intuition_temp * self.sloppy).max(1.0);
         let mut chosen = vec![];
         for _ in 0..k {
             let maxs = scored.iter().map(|x| x.0).fold(f32::MIN, f32::max);
@@ -246,7 +249,9 @@ impl<'a> Mind<'a> {
 
         // Stage 1-2: perception.
         let percepts = perceive(b, &p, &mut self.rng);
+        self.sloppy = 1.0;
         let feel_now = self.feel(b);
+        self.sloppy = 0.7 + 0.6 * (feel_now.abs() as f32 / 400.0).min(1.0);
         let concepts = self.main_concepts(b);
         trace.push(format!(
             "I notice {} of {} legal moves. Position feels {}{}.",
@@ -330,6 +335,28 @@ impl<'a> Mind<'a> {
             }
         }
 
+        // Repetition: a player who stands better avoids repeating; one who stands worse
+        // is happy to. A position seen twice before is simply a draw.
+        {
+            let hist = self.searcher.game_history();
+            let ahead = cands[0].value;
+            let mut changed = false;
+            for c in cands.iter_mut() {
+                let h = b.make(c.mv).hash;
+                let seen = hist.iter().filter(|&&x| x == h).count();
+                if seen >= 2 {
+                    c.value = if ahead > 50 { -30 } else { 0 };
+                    changed = true;
+                } else if seen == 1 && ahead > 100 {
+                    c.value -= 60;
+                    changed = true;
+                }
+            }
+            if changed {
+                cands.sort_by_key(|c| -c.value);
+            }
+        }
+
         // Stage 6a: blunder check.
         let mut chosen = 0;
         if self.rng.chance(p.p_blunder_check) {
@@ -352,8 +379,11 @@ impl<'a> Mind<'a> {
 
         // Stage 6b: verification by real search (strong settings only).
         if p.verify_depth > 0 {
-            let depth = p.verify_depth;
-            let tolerance = p.verify_tolerance_cp;
+            // Club players' endgame technique lags their middlegame play: below
+            // master strength, concrete checking is somewhat looser there.
+            let eg = ((12 - crate::eval::game_phase(b)) as f32 / 8.0).clamp(0.0, 1.0) * (1.0 - p.engine_weight);
+            let depth = ((p.verify_depth as f32) * (1.0 - 0.3 * eg)).round().max(1.0) as u32;
+            let tolerance = p.verify_tolerance_cp * (1.0 + 0.8 * eg);
             let moves: Vec<Move> = cands.iter().map(|c| c.mv).collect();
             let budget = 20_000u64 * depth as u64 * depth as u64;
             let scored = self.searcher.score_moves(b, &moves, depth, Some(budget), limits.movetime_ms.map(|t| t * 35 / 100));
@@ -413,7 +443,7 @@ impl<'a> Mind<'a> {
         // about -12 pawns, a quarter by -8); many play on to mate. Per-move
         // hazard on how lost the position feels, calibrated on those games.
         let hopeless = (-feel_now).max(-cands[0].value.max(-30000));
-        let hazard = 0.5 / (1.0 + (-((hopeless as f32) - 1100.0) / 150.0).exp());
+        let hazard = 0.2 / (1.0 + (-((hopeless as f32) - 1100.0) / 150.0).exp());
         let resign = hopeless > 600 && self.rng.chance(hazard);
         if resign {
             trace.push(format!("This is hopeless ({}). I resign.", fmt_cp(-hopeless)));
@@ -439,7 +469,10 @@ impl<'a> Mind<'a> {
         let (allot, remaining) = match self.clock {
             Some((rem, inc)) => {
                 let moves_left = (45.0 - 0.6 * move_no).max(18.0);
-                (rem.max(0.0) / moves_left + 0.8 * inc, rem.max(0.0))
+                // Club players budget optimistically and lose many games on time,
+                // especially in bullet; strong players manage the clock better.
+                let greed = 1.0 + 0.8 * ((2200.0 - self.persona.elo) / 1200.0).clamp(0.0, 1.0);
+                (greed * rem.max(0.0) / moves_left + 0.8 * inc, rem.max(0.0))
             }
             None => (4.0 * self.tc_scale.clamp(0.1, 20.0), f32::INFINITY),
         };
@@ -459,11 +492,13 @@ impl<'a> Mind<'a> {
             // and go quickly; time use peaks in the early middlegame.
             let t = ((move_no - 6.0) / 10.0).clamp(0.0, 1.0);
             let familiar = 0.3 + 0.7 * t * t * (3.0 - 2.0 * t);
-            (allot * criticality * familiar * (0.5 * self.rng.gauss()).exp()).min(5.0 * allot)
+            (allot * criticality * familiar * (0.65 * self.rng.gauss()).exp()).min(5.0 * allot)
         };
         // Perception plus motor time: online players rarely move in under ~0.4 s
         // (premoves aside), except when the clock is nearly gone.
-        let floor = if remaining < 5.0 { 0.15 } else { 0.4 + 0.1 * self.rng.f32() };
+        // In a scramble a human still needs a few tenths of a second per move,
+        // however little time is left; that is how flags fall.
+        let floor = if remaining < 5.0 { 0.25 + 0.25 * self.rng.f32() } else { 0.4 + 0.1 * self.rng.f32() };
         secs = secs.min(0.25 * remaining).max(floor);
         (secs.min(600.0) * 1000.0) as u64
     }

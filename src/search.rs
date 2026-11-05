@@ -90,6 +90,10 @@ impl Searcher {
         self.rep = hashes;
     }
 
+    pub fn game_history(&self) -> &[u64] {
+        &self.rep
+    }
+
     fn tt_probe(&self, key: u64) -> Option<TTEntry> {
         let e = self.tt[(key as usize) & (self.tt.len() - 1)];
         (e.key == key).then_some(e)
