@@ -138,8 +138,8 @@ impl Persona {
             p_blind_quiet: curve(e, [0.80, 0.60, 0.40, 0.22, 0.10, 0.05, 0.03, 0.0]),
             pattern_skill: 0.0,
             max_candidates: curve(e, [1.0, 2.0, 3.0, 3.0, 4.0, 5.0, 5.0, 6.0]).round() as usize,
-            intuition_temp: curve(e, [220.0, 120.0, 70.0, 40.0, 25.0, 15.0, 10.0, 5.0]),
-            forcing_attraction: curve(e, [80.0, 50.0, 25.0, 10.0, 5.0, 0.0, 0.0, 0.0]),
+            intuition_temp: env_scale("HL_NOISE_SCALE") * curve(e, [220.0, 120.0, 70.0, 40.0, 25.0, 15.0, 10.0, 5.0]),
+            forcing_attraction: env_scale("HL_FORCE_SCALE") * curve(e, [80.0, 50.0, 25.0, 10.0, 5.0, 0.0, 0.0, 0.0]),
             calc_depth: curve(e, [0.0, 1.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0]).round() as u32,
             opp_replies: curve(e, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]).round() as usize,
             node_budget: curve(e, [5.0, 25.0, 100.0, 400.0, 2000.0, 8000.0, 20000.0, 50000.0]) as u32,
@@ -148,7 +148,7 @@ impl Persona {
             satisfice_cp: curve(e, [300.0, 200.0, 120.0, 70.0, 40.0, 20.0, 10.0, 0.0]),
             p_rethink: curve(e, [0.05, 0.25, 0.55, 0.80, 0.92, 0.97, 0.99, 1.0]),
             knowledge,
-            eval_noise_cp: curve(e, [250.0, 150.0, 90.0, 55.0, 35.0, 22.0, 15.0, 5.0]),
+            eval_noise_cp: env_scale("HL_NOISE_SCALE") * curve(e, [250.0, 150.0, 90.0, 55.0, 35.0, 22.0, 15.0, 5.0]),
             p_blunder_check: curve(e, [0.0, 0.25, 0.55, 0.80, 0.92, 0.97, 0.99, 1.0]),
             verify_depth: curve(e, [0.0, 0.0, 0.0, 0.0, 1.0, 3.0, 6.0, 14.0]).round() as u32,
             verify_tolerance_cp: curve(e, [9999.0, 9999.0, 9999.0, 9999.0, 250.0, 120.0, 50.0, 10.0]),
@@ -230,6 +230,16 @@ mod tests {
 }
 
 /// Global scale on the naturalness prior (env HL_NAT_SCALE, for experiments; default 1).
+pub fn env_scale(name: &str) -> f32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Ok(v) = std::env::var(name) {
+            return v.parse().unwrap_or(1.0);
+        }
+    }
+    1.0
+}
+
 fn nat_scale() -> f32 {
     #[cfg(not(target_arch = "wasm32"))]
     {

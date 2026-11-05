@@ -222,10 +222,15 @@ impl Engine {
                         let f: Vec<&str> = line.split('\t').collect();
                         let Ok(b) = Board::from_fen(f[0]) else { continue };
                         let last = crate::board::parse_sq(f[1]);
-                        for m in b.legal_moves() {
+                        // Last column: the move's shallow search score (mover's view), so the fit
+                        // can separate "looks natural" from "is simply good".
+                        let moves = b.legal_moves();
+                        self.searcher.set_game_history(vec![]);
+                        let scored = self.searcher.score_moves(&b, &moves, 1, Some(50_000), None);
+                        for (m, sc) in scored {
                             let x = crate::mind::natural::features(&b, m, last);
                             let xs: Vec<String> = x.iter().map(|v| format!("{v:.3}")).collect();
-                            writeln!(out, "{} {}", (m.uci() == f[2]) as u8, xs.join(" ")).unwrap();
+                            writeln!(out, "{} {} {}", (m.uci() == f[2]) as u8, xs.join(" "), sc.clamp(-2000, 2000)).unwrap();
                         }
                         writeln!(out).unwrap();
                     }

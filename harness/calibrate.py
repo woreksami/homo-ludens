@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import statistics
 import sys
@@ -122,6 +123,7 @@ def main():
         r = {"band": band, "human": sc.loss(fen, human)}
         for s in settings:
             r[s] = sc.loss(fen, bot[s][i])
+        r["best"] = sc.cache[f"{fen}|*"]
         rows.append(r)
         if i % 100 == 99:
             sc.save()
@@ -129,8 +131,13 @@ def main():
     sc.save()
     sc.eng.quit()
 
-    def stats(xs):
-        return {"acpl": round(statistics.fmean(xs), 1), "blunder": round(sum(x >= 200 for x in xs) / len(xs), 3)}
+    def stats(xs, bests=None):
+        out = {"acpl": round(statistics.fmean(xs), 1), "blunder": round(sum(x >= 200 for x in xs) / len(xs), 3)}
+        if bests:
+            wp = lambda cp: 50 + 50 * (2 / (1 + math.exp(-0.00368208 * max(-1000, min(1000, cp)))) - 1)  # noqa: E731
+            d = [wp(b) - wp(b - x) for x, b in zip(xs, bests)]
+            out |= {k: round(sum(lo <= v < hi for v in d) / len(d), 3) for k, lo, hi in [("zero", -1e9, 1), ("inacc", 5, 10), ("mistake", 10, 15), ("wp_blunder", 15, 1e9)]}
+        return out
 
     table = {}
     for band in sorted({r["band"] for r in rows}):
@@ -141,7 +148,10 @@ def main():
     for band, t in table.items():
         print(f"{band:5} {t['human']['acpl']:6} {t['human']['blunder']:5}   " + "  ".join(f"{t[s]['acpl']:6}/{t[s]['blunder']:.2f}" for s in settings))
     allh = [r["human"] for r in rows]
-    print("all humans", stats(allh), {s: stats([r[s] for r in rows]) for s in settings})
+    bests = [r["best"] for r in rows]
+    print("all humans", stats(allh, bests))
+    for s in settings:
+        print(f"all HL@{s}", stats([r[s] for r in rows], bests))
 
 
 if __name__ == "__main__":

@@ -141,7 +141,9 @@ pub fn log_probs(b: &Board, moves: &[Move], last_to: Option<u8>, elo: f32) -> Ve
         .iter()
         .map(|&m| {
             let x = features(b, m, last_to);
-            (0..NF).map(|i| x[i] * (NAT_W[i] + z * NAT_V[i])).sum()
+            // The check term is left out: the mind's own search already makes checks
+            // attractive, and adding the human habit on top doubles it (too many checks).
+            (0..NF).filter(|&i| i != 9).map(|i| x[i] * (NAT_W[i] + z * NAT_V[i])).sum()
         })
         .collect();
     let mx = logits.iter().cloned().fold(f32::MIN, f32::max);

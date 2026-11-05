@@ -251,7 +251,7 @@ impl<'a> Mind<'a> {
         let percepts = perceive(b, &p, &mut self.rng);
         self.sloppy = 1.0;
         let feel_now = self.feel(b);
-        self.sloppy = 0.7 + 0.6 * (feel_now.abs() as f32 / 400.0).min(1.0);
+        self.sloppy = 1.0 + (super::persona::env_scale("HL_SLOPPY") - 1.0) * (-0.3 + 0.6 * (feel_now.abs() as f32 / 400.0).min(1.0));
         let concepts = self.main_concepts(b);
         trace.push(format!(
             "I notice {} of {} legal moves. Position feels {}{}.",
@@ -443,8 +443,14 @@ impl<'a> Mind<'a> {
         // about -12 pawns, a quarter by -8); many play on to mate. Per-move
         // hazard on how lost the position feels, calibrated on those games.
         let hopeless = (-feel_now).max(-cands[0].value.max(-30000));
-        let hazard = 0.2 / (1.0 + (-((hopeless as f32) - 1100.0) / 150.0).exp());
-        let resign = hopeless > 600 && self.rng.chance(hazard);
+        // About half of club players who are lost never resign that game: they play on
+        // and get mated or flag. A per-game trait (fixed by the game's opening moves and
+        // this side's colour) decides which kind of player this is today.
+        let hist = self.searcher.game_history();
+        let game_id = hist.get(10.min(hist.len().saturating_sub(1))).copied().unwrap_or(0) ^ (b.side as u64 * 0x9E37_79B9_7F4A_7C15);
+        let plays_on = (game_id.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) % 100 < 45;
+        let hazard = 0.35 / (1.0 + (-((hopeless as f32) - 900.0) / 150.0).exp());
+        let resign = !plays_on && hopeless > 500 && self.rng.chance(hazard);
         if resign {
             trace.push(format!("This is hopeless ({}). I resign.", fmt_cp(-hopeless)));
         }
@@ -471,7 +477,7 @@ impl<'a> Mind<'a> {
                 let moves_left = (45.0 - 0.6 * move_no).max(18.0);
                 // Club players budget optimistically and lose many games on time,
                 // especially in bullet; strong players manage the clock better.
-                let greed = 1.0 + 0.8 * ((2200.0 - self.persona.elo) / 1200.0).clamp(0.0, 1.0);
+                let greed = 1.0 + 1.2 * ((2200.0 - self.persona.elo) / 1200.0).clamp(0.0, 1.0);
                 (greed * rem.max(0.0) / moves_left + 0.8 * inc, rem.max(0.0))
             }
             None => (4.0 * self.tc_scale.clamp(0.1, 20.0), f32::INFINITY),
