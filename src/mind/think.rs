@@ -251,7 +251,9 @@ impl<'a> Mind<'a> {
         let percepts = perceive(b, &p, &mut self.rng);
         self.sloppy = 1.0;
         let feel_now = self.feel(b);
-        self.sloppy = 1.0 + (super::persona::env_scale("HL_SLOPPY") - 1.0) * (-0.3 + 0.6 * (feel_now.abs() as f32 / 400.0).min(1.0));
+        // Players defend lost positions worse than they play level ones: once clearly
+        // worse, attention and effort drop and errors grow.
+        self.sloppy = 1.0 + 0.8 * ((-feel_now - 150) as f32 / 450.0).clamp(0.0, 1.0);
         let concepts = self.main_concepts(b);
         trace.push(format!(
             "I notice {} of {} legal moves. Position feels {}{}.",
@@ -383,7 +385,7 @@ impl<'a> Mind<'a> {
             // master strength, concrete checking is somewhat looser there.
             let eg = ((12 - crate::eval::game_phase(b)) as f32 / 8.0).clamp(0.0, 1.0) * (1.0 - p.engine_weight);
             let depth = ((p.verify_depth as f32) * (1.0 - 0.3 * eg)).round().max(1.0) as u32;
-            let tolerance = p.verify_tolerance_cp * (1.0 + 0.8 * eg);
+            let tolerance = p.verify_tolerance_cp * (1.0 + 0.8 * eg) * self.sloppy;
             let moves: Vec<Move> = cands.iter().map(|c| c.mv).collect();
             let budget = 20_000u64 * depth as u64 * depth as u64;
             let scored = self.searcher.score_moves(b, &moves, depth, Some(budget), limits.movetime_ms.map(|t| t * 35 / 100));
@@ -474,7 +476,7 @@ impl<'a> Mind<'a> {
         let move_no = b.fullmove as f32;
         let (allot, remaining) = match self.clock {
             Some((rem, inc)) => {
-                let moves_left = (45.0 - 0.6 * move_no).max(18.0);
+                let moves_left = (40.0 - 0.6 * move_no).max(15.0);
                 // Club players budget optimistically and lose many games on time,
                 // especially in bullet; strong players manage the clock better.
                 let greed = 1.0 + 1.2 * ((2200.0 - self.persona.elo) / 1200.0).clamp(0.0, 1.0);
