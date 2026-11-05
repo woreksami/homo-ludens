@@ -218,10 +218,13 @@ impl<'a> Mind<'a> {
         let p = self.persona.clone();
         self.nodes = 0;
         self.budget = p.node_budget;
-        // Time trouble: with little on the clock, players calculate less.
+        // Time trouble: with little on the clock, players calculate less, and their
+        // concrete checking (stage 6b) shrinks with it.
+        let mut hurry = 1.0f32;
         if let Some((rem, inc)) = self.clock {
             let t = rem + 10.0 * inc;
             if t < 15.0 {
+                hurry = (t / 15.0).max(0.2);
                 self.budget = ((p.node_budget as f32) * (t / 15.0).max(0.25)) as u32;
                 trace.push(format!("Only {:.0} s left; no time to calculate deeply.", rem));
             }
@@ -253,7 +256,7 @@ impl<'a> Mind<'a> {
         let feel_now = self.feel(b);
         // Players defend lost positions worse than they play level ones: once clearly
         // worse, attention and effort drop and errors grow.
-        self.sloppy = 1.0 + 0.8 * ((-feel_now - 150) as f32 / 450.0).clamp(0.0, 1.0);
+        self.sloppy = 1.0 + 1.5 * ((-feel_now - 150) as f32 / 750.0).clamp(0.0, 1.0);
         let concepts = self.main_concepts(b);
         trace.push(format!(
             "I notice {} of {} legal moves. Position feels {}{}.",
@@ -384,8 +387,8 @@ impl<'a> Mind<'a> {
             // Club players' endgame technique lags their middlegame play: below
             // master strength, concrete checking is somewhat looser there.
             let eg = ((12 - crate::eval::game_phase(b)) as f32 / 8.0).clamp(0.0, 1.0) * (1.0 - p.engine_weight);
-            let depth = ((p.verify_depth as f32) * (1.0 - 0.3 * eg)).round().max(1.0) as u32;
-            let tolerance = p.verify_tolerance_cp * (1.0 + 0.8 * eg) * self.sloppy;
+            let depth = ((p.verify_depth as f32) * (1.0 - 0.3 * eg) * hurry).round().max(1.0) as u32;
+            let tolerance = p.verify_tolerance_cp * (1.0 + 0.8 * eg) * self.sloppy / hurry;
             let moves: Vec<Move> = cands.iter().map(|c| c.mv).collect();
             let budget = 20_000u64 * depth as u64 * depth as u64;
             let scored = self.searcher.score_moves(b, &moves, depth, Some(budget), limits.movetime_ms.map(|t| t * 35 / 100));
