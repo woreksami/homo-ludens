@@ -35,6 +35,8 @@ FEATURES = [
     "match_critical", "match_ambiguous", "acpl_when_worse", "never_worse", "acpl_opening", "acpl_middlegame",
     "acpl_endgame", "game_plies",
 ]
+# Used only when the human games carry move times too.
+TIME_FEATURES = ["emt_cv", "emt_fast_share", "emt_rel", "emt_long_share"]
 LABELS = {
     "acpl": "Average centipawn loss",
     "accuracy": "Lichess accuracy %",
@@ -51,7 +53,19 @@ LABELS = {
     "acpl_middlegame": "ACPL, middlegame",
     "acpl_endgame": "ACPL, endgame",
     "game_plies": "Game length (plies)",
+    "emt_cv": "Move-time CV",
+    "emt_fast_share": "Share of moves under 0.5 s",
+    "emt_rel": "Mean move time / nominal (base/40 + inc)",
+    "emt_long_share": "Share of moves over 3x nominal",
 }
+
+
+def nominal_secs(tc: str) -> float:
+    try:
+        base, inc = (float(x) for x in tc.split("+"))
+    except ValueError:
+        return float("nan")
+    return base / 40 + inc
 
 
 def win_pct(cp: float) -> float:
@@ -218,7 +232,9 @@ def player_games(pgn: Path, an: dict, corpus: str) -> list[dict]:
                     "acpl_endgame": mean("loss_end"),
                     "game_plies": float(g.end().ply()),
                     "emt_cv": (statistics.pstdev(emt) / statistics.fmean(emt)) if len(emt) >= 10 and statistics.fmean(emt) > 0 else float("nan"),
-                    "emt_fast_share": (sum(t < 0.5 for t in emt) / len(emt)) if emt else float("nan"),
+                    "emt_fast_share": (sum(t < 0.5 for t in emt) / len(emt)) if len(emt) >= 10 else float("nan"),
+                    "emt_rel": (statistics.fmean(emt) / nominal_secs(h.get("TimeControl", "-"))) if len(emt) >= 10 else float("nan"),
+                    "emt_long_share": (sum(t > 3 * nominal_secs(h.get("TimeControl", "-")) for t in emt) / len(emt)) if len(emt) >= 10 else float("nan"),
                 })
     return rows
 
@@ -340,6 +356,12 @@ def main():
         # how the replay ends, so it is reported both ways).
         rep["detector"] = detector(hs, rows, FEATURES)
         rep["detector_without_length"] = {k: v for k, v in detector(hs, rows, [f for f in FEATURES if f != "game_plies"]).items() if k != "single_feature_auc"}
+        human_timed = sum(not math.isnan(r["emt_cv"]) for r in hs) > 0.5 * max(1, len(hs))
+        if human_timed:
+            rep["detector_with_time"] = detector(hs, rows, [f for f in FEATURES if f != "game_plies"] + TIME_FEATURES)
+            rep["time_metrics"] = {f: {"human": statistics.fmean([r[f] for r in hs if not math.isnan(r[f])] or [float("nan")]),
+                                       "bot": statistics.fmean([r[f] for r in rows if not math.isnan(r[f])] or [float("nan")]),
+                                       "z": z_two_sample([r[f] for r in rows], [r[f] for r in hs])} for f in TIME_FEATURES}
         report["bots"][bot] = rep
 
     out = args.out or (args.dir / "grade.json")
@@ -371,6 +393,13 @@ def main():
             if m["human_mean"] is None:
                 continue
             lines.append(f"| {LABELS[f]} | {m['human_mean']:.3g} | {m['bot_mean']:.3g} | {m['z']:+.1f} |")
+        if "detector_with_time" in rep:
+            dt = rep["detector_with_time"]
+            lines.append(f"\nWith move times (no game length): logistic {dt['logistic']:.2f}, boosted {dt['boosted_trees']:.2f}\n")
+            for f, m in rep["time_metrics"].items():
+                lines.append(f"| {LABELS[f]} | {m['human']:.3g} | {m['bot']:.3g} | {m['z']:+.1f} |")
+            tt = [(k, v) for k, v in dt["single_feature_auc"].items() if k in TIME_FEATURES]
+            lines.append("\nTime giveaways (single-signal AUC): " + ", ".join(f"{LABELS[k]} {v:.2f}" for k, v in tt) + "\n")
         top = list(rep["detector"]["single_feature_auc"].items())[:5]
         lines.append("\nStrongest giveaways (single-signal AUC): " + ", ".join(f"{LABELS[k]} {v:.2f}" for k, v in top))
     md = "\n".join(lines) + "\n"
