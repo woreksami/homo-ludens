@@ -469,13 +469,17 @@ impl<'a> Mind<'a> {
         // this side's colour) decides which kind of player this is today.
         let hist = self.searcher.game_history();
         let game_id = hist.get(10.min(hist.len().saturating_sub(1))).copied().unwrap_or(0) ^ (b.side as u64 * 0x9E37_79B9_7F4A_7C15);
-        let plays_on = (game_id.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) % 100 < 38;
-        let hazard = 0.35 / (1.0 + (-((hopeless as f32) - 900.0) / 150.0).exp());
+        // Titled players almost never play on to mate (~10-15% of decided games end
+        // in mate) and resign at a few pawns down, not twelve.
+        let pro = ((self.persona.elo - 1800.0) / 1000.0).clamp(0.0, 1.0);
+        let plays_on = (game_id.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) % 100 < (38.0 - 30.0 * pro) as u64;
+        let mid = 900.0 - 450.0 * pro;
+        let hazard = 0.35 / (1.0 + (-((hopeless as f32) - mid) / 150.0).exp());
         // Even stubborn players rarely wait to be mated with a bare king against
         // a queen or rook: twice as many HL games as human ones went that far.
         let has = |c: u8, kinds: &[u8]| b.sq.iter().any(|&x| x != 0 && piece_color(x) == c && kinds.contains(&piece_type(x)));
         let bare = !has(b.side, &[KNIGHT, BISHOP, ROOK, QUEEN]) && has(1 - b.side, &[ROOK, QUEEN]);
-        let resign = hopeless > 500 && ((!plays_on && self.rng.chance(hazard)) || (bare && hopeless > 1200 && self.rng.chance(0.12)));
+        let resign = hopeless > (500.0 - 200.0 * pro) as i32 && ((!plays_on && self.rng.chance(hazard)) || (bare && hopeless > 1200 && self.rng.chance(0.12)));
         if resign {
             trace.push(format!("This is hopeless ({}). I resign.", fmt_cp(-hopeless)));
         }
@@ -503,6 +507,9 @@ impl<'a> Mind<'a> {
                 // Club players budget optimistically and lose many games on time,
                 // especially in bullet; strong players manage the clock better.
                 let greed = 1.0 + 1.2 * ((2200.0 - self.persona.elo) / 1200.0).clamp(0.0, 1.0);
+                // Strong players without increment keep a reserve for the ending:
+                // titled 3+0 players average ~0.7 of base/40 per move and rarely flag.
+                let greed = if inc <= 0.0 { greed - 0.25 * ((self.persona.elo - 2200.0) / 800.0).clamp(0.0, 1.0) } else { greed };
                 (greed * rem.max(0.0) / moves_left + 0.8 * inc, rem.max(0.0))
             }
             None => (4.0 * self.tc_scale.clamp(0.1, 20.0), f32::INFINITY),
@@ -536,7 +543,11 @@ impl<'a> Mind<'a> {
         // second or so. Top blitz players do this on ~18% of moves, more as the clock
         // runs down (measured from clocked online games).
         if self.clock.is_some() && obvious {
-            let p_fast = (0.75 - 0.06 * allot).clamp(0.05, 0.6) + if remaining < 20.0 { 0.2 } else { 0.0 };
+            // With an increment the clock is rarely tight, so premoves are much rarer
+            // (titled 3+2: ~6% of moves under 0.5 s, vs ~18% at 3+0).
+            let inc = self.clock.map_or(0.0, |c| c.1);
+            let base_p = (0.75 - 0.06 * allot).clamp(0.05, 0.6) * if inc > 0.0 { 0.3 } else { 1.0 };
+            let p_fast = base_p + if remaining < 20.0 { 0.2 } else { 0.0 };
             if self.rng.chance(p_fast) {
                 let u = self.rng.f32();
                 secs = 0.08 + 0.35 * u * u;

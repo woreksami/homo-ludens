@@ -147,9 +147,13 @@ def after_eval_for_mover(an: dict, b_after: chess.Board) -> float | None:
 def player_games(pgn: Path, an: dict, corpus: str) -> list[dict]:
     rows = []
     with open(pgn, encoding="utf-8", errors="replace") as f:
+        idx = -1
         while (g := chess.pgn.read_game(f)) is not None:
+            idx += 1
             h = g.headers
             game_id = h.get("Site", "").rsplit("/", 1)[-1]
+            if not any(ch.isdigit() for ch in game_id):
+                game_id = f"g{idx}"  # sites without ids (Chess.com sets): pair by file order
             per = {chess.WHITE: defaultdict(list), chess.BLACK: defaultdict(list)}
             seq = []
             b = g.board()
