@@ -3,39 +3,41 @@ import sys
 from pathlib import Path
 import numpy as np
 
-feat = Path("reports/natural/features.txt").read_text().split("\n\n")
+raw = Path("reports/natural/features.txt").read_text()
 elos = [int(l.split("\t")[3]) for l in Path("reports/natural/positions.tsv").read_text().splitlines() if l]
-X, y, g = [], [], []
-for gi, block in enumerate(b for b in feat if b.strip()):
-    for line in block.strip().splitlines():
-        v = line.split()
-        y.append(int(v[0])); X.append([float(t) for t in v[1:]]); g.append(gi)
-X = np.array(X, np.float32); y = np.array(y); g = np.array(g)
+lines = raw.split("\n"); del raw
+g_list = []; rows = []; gi = 0
+for ln in lines:
+    if ln:
+        rows.append(ln); g_list.append(gi)
+    elif rows and g_list[-1] == gi:
+        gi += 1
+del lines
+D = np.fromstring(" ".join(rows), dtype=np.float32, sep=" ").reshape(len(rows), -1); del rows
+g = np.array(g_list, np.int64); del g_list
+y = D[:, 0].astype(np.int64); X = D[:, 1:]; del D
 G = g.max() + 1
+z = ((np.array(elos[:G], np.float32) - 1500) / 500)[g]
 # Last column is the move's shallow search score: turn it into "pawns worse than the
 # best move here" (capped) and fit it alongside, but do not export it: the mind adds
 # naturalness on top of its own evaluation, so the prior must be what remains.
-sc = X[:, -1]; X = X[:, :-1]
+sc = X[:, -1].copy(); X = X[:, :-1]
 gmax = np.full(G, -1e9, np.float32); np.maximum.at(gmax, g, sc)
-rel = np.clip((sc - gmax[g]) / 100.0, -10, 0)[:, None]
-z = ((np.array(elos[:G], np.float32) - 1500) / 500)[g]
+rel = np.clip((sc - gmax[g]) / 100.0, -10, 0)[:, None].astype(np.float32)
 nf = X.shape[1]
 XZ = np.hstack([X, X * z[:, None], rel, rel * z[:, None]])
+del X, rel
 val = (g % 10) == 0
-
-def split(mask):
+SPL = {}
+for name, mask in (("train", ~val), ("val", val)):
     idx = np.nonzero(mask)[0]
     gg = g[idx]
     starts = np.r_[0, np.nonzero(np.diff(gg))[0] + 1]
-    return idx, gg, starts
+    SPL[name] = (XZ[idx], y[idx], starts, gg)
+del XZ
 
-SPL = {}
-def loss_grad(w, mask):
-    key = id(mask)
-    if key not in SPL:
-        SPL[key] = split(mask)
-    idx, gg, starts = SPL[key]
-    A = XZ[idx]; yy = y[idx]
+def loss_grad(w, name):
+    A, yy, starts, _ = SPL[name]
     s = A @ w
     mx = np.maximum.reduceat(s, starts)
     sizes = np.diff(np.r_[starts, len(s)])
@@ -49,17 +51,17 @@ def loss_grad(w, mask):
 w = np.zeros(2 * nf + 2, np.float32); m = np.zeros_like(w); v2 = np.zeros_like(w)
 lr = 0.05
 for it in range(1, 801):
-    nll, gr, _ = loss_grad(w, ~val)
+    nll, gr, _ = loss_grad(w, "train")
     gr += 1e-3 * w
     m = 0.9 * m + 0.1 * gr; v2 = 0.999 * v2 + 0.001 * gr * gr
     w -= lr * (m / (1 - 0.9 ** it)) / (np.sqrt(v2 / (1 - 0.999 ** it)) + 1e-8)
     if it % 200 == 0:
-        vn, _, p = loss_grad(w, val)
+        vn, _, p = loss_grad(w, "val")
         # top-1 accuracy on validation
-        gv = g[val]; s = XZ[val] @ w
+        A, yv, _, gv = SPL["val"]; s = A @ w
         best = {}
         for i, (gi, si) in enumerate(zip(gv, s)):
-            if gi not in best or si > best[gi][0]: best[gi] = (si, y[val][i])
+            if gi not in best or si > best[gi][0]: best[gi] = (si, yv[i])
         acc = np.mean([b[1] for b in best.values()])
         print(f"iter {it}: train {nll:.4f} val {vn:.4f} top1 {acc:.3f}", file=sys.stderr)
 nm = ["P","N","B","R","Q","K","capture","gain","recapture","check","promo","castle","develop","develop_open","early_queen","king_mg","king_eg","king_eg_centre","backward","distance","centralise","pawn_centre","pawn_flank","pawn_rank","pawn_double","passed","shield_pawn","to_en_prise","escape","knight_edge","rook_open","seventh","threat","long"]

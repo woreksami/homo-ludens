@@ -221,6 +221,15 @@ impl<'a> Mind<'a> {
         // Time trouble: with little on the clock, players calculate less, and their
         // concrete checking (stage 6b) shrinks with it.
         let mut hurry = 1.0f32;
+        // Time per move: a rapid player calculates more than a bullet player of the
+        // same rating, so effort scales with the time this move can be given.
+        let mut effort = 1.0f32;
+        if let Some((rem, inc)) = self.clock {
+            let moves_left = (40.0 - 0.6 * b.fullmove as f32).max(15.0);
+            let allot = rem.max(0.0) / moves_left + 0.8 * inc;
+            effort = (allot / 6.0).sqrt().clamp(0.6, 1.8);
+            self.budget = ((self.budget as f32) * effort) as u32;
+        }
         if let Some((rem, inc)) = self.clock {
             let t = rem + 10.0 * inc;
             if t < 15.0 {
@@ -388,7 +397,7 @@ impl<'a> Mind<'a> {
             // master strength, concrete checking is somewhat looser there.
             let eg = ((12 - crate::eval::game_phase(b)) as f32 / 8.0).clamp(0.0, 1.0) * (1.0 - p.engine_weight);
             let depth = ((p.verify_depth as f32) * (1.0 - 0.3 * eg) * hurry).round().max(1.0) as u32;
-            let tolerance = p.verify_tolerance_cp * (1.0 + 0.8 * eg) * self.sloppy / hurry;
+            let tolerance = p.verify_tolerance_cp * (1.0 + 0.8 * eg) * self.sloppy / (hurry * effort);
             let moves: Vec<Move> = cands.iter().map(|c| c.mv).collect();
             let budget = 20_000u64 * depth as u64 * depth as u64;
             let scored = self.searcher.score_moves(b, &moves, depth, Some(budget), limits.movetime_ms.map(|t| t * 35 / 100));
