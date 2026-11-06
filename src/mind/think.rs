@@ -397,6 +397,8 @@ impl<'a> Mind<'a> {
             trace.push("I skip the blunder check.".into());
         }
         let mut best = cands[chosen.min(cands.len() - 1)].mv;
+        // Concrete value of the move finally chosen, once checked by search.
+        let mut best_val: Option<i32> = None;
 
         // Stage 6b: verification by real search (strong settings only).
         if p.verify_depth > 0 {
@@ -419,6 +421,7 @@ impl<'a> Mind<'a> {
                 ));
                 best = pick;
             }
+            best_val = scored.iter().find(|x| x.0 == best).map(|x| x.1);
         }
 
         // Stage 6c: top settings: let a full search challenge the human choice.
@@ -452,7 +455,9 @@ impl<'a> Mind<'a> {
                     search::score_string(my_score)
                 ));
                 best = full.best;
+                best_val = Some(engine_score);
             } else {
+                best_val = Some(my_score);
                 trace.push(format!("Deeper calculation confirms {}.", san(b, best)));
             }
         }
@@ -463,7 +468,12 @@ impl<'a> Mind<'a> {
         // Resignation: real Lichess players resign when clearly lost (median
         // about -12 pawns, a quarter by -8); many play on to mate. Per-move
         // hazard on how lost the position feels, calibrated on those games.
-        let hopeless = (-feel_now).max(-cands[0].value.max(-30000));
+        // Judge by the move actually chosen: the first candidate may be a blunder the
+        // check rejected (resigning at -3 because Rc8 hangs a knight, then playing Nge5).
+        let hopeless = match best_val {
+            Some(v) => (-v.max(-30000)).min(-feel_now + 300),
+            None => (-feel_now).min(-cands.iter().find(|c| c.mv == best).unwrap_or(&cands[0]).value.max(-30000) + 300),
+        };
         // About half of club players who are lost never resign that game: they play on
         // and get mated or flag. A per-game trait (fixed by the game's opening moves and
         // this side's colour) decides which kind of player this is today.
@@ -473,13 +483,13 @@ impl<'a> Mind<'a> {
         // in mate) and resign at a few pawns down, not twelve.
         let pro = ((self.persona.elo - 1800.0) / 1000.0).clamp(0.0, 1.0);
         let plays_on = (game_id.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) % 100 < (38.0 - 30.0 * pro) as u64;
-        let mid = 900.0 - 450.0 * pro;
+        let mid = 900.0 - 200.0 * pro;
         let hazard = 0.35 / (1.0 + (-((hopeless as f32) - mid) / 150.0).exp());
         // Even stubborn players rarely wait to be mated with a bare king against
         // a queen or rook: twice as many HL games as human ones went that far.
         let has = |c: u8, kinds: &[u8]| b.sq.iter().any(|&x| x != 0 && piece_color(x) == c && kinds.contains(&piece_type(x)));
         let bare = !has(b.side, &[KNIGHT, BISHOP, ROOK, QUEEN]) && has(1 - b.side, &[ROOK, QUEEN]);
-        let resign = hopeless > (500.0 - 200.0 * pro) as i32 && ((!plays_on && self.rng.chance(hazard)) || (bare && hopeless > 1200 && self.rng.chance(0.12)));
+        let resign = hopeless > (500.0 - 100.0 * pro) as i32 && ((!plays_on && self.rng.chance(hazard)) || (bare && hopeless > 1200 && self.rng.chance(0.12)));
         if resign {
             trace.push(format!("This is hopeless ({}). I resign.", fmt_cp(-hopeless)));
         }
