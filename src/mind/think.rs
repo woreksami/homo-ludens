@@ -5,7 +5,7 @@
 
 use super::notation::{san, san_line};
 use super::perception::{en_prise, perceive, perceive_replies, Percept, Reason};
-use super::persona::{Persona, Rng};
+use super::persona::{env_scale, Persona, Rng};
 use crate::board::*;
 use crate::eval::{self, CONCEPT_NAMES, N_CONCEPTS};
 use crate::search::{self, Limits, Searcher, INF, MATE};
@@ -48,12 +48,13 @@ pub struct Mind<'a> {
     /// Care multiplier for this move: players are careful when the game is balanced
     /// and sloppier once it is decided (scaled error grows with the evaluation).
     sloppy: f32,
+    press: f32,
     searcher: &'a mut Searcher,
 }
 
 impl<'a> Mind<'a> {
     pub fn new(persona: Persona, seed: u64, searcher: &'a mut Searcher) -> Mind<'a> {
-        Mind { persona, rng: Rng::new(seed), seed, nodes: 0, budget: 0, tc_scale: 1.0, clock: None, last_capture_sq: None, last_to: None, sloppy: 1.0, searcher }
+        Mind { persona, rng: Rng::new(seed), seed, nodes: 0, budget: 0, tc_scale: 1.0, clock: None, last_capture_sq: None, last_to: None, sloppy: 1.0, press: 0.0, searcher }
     }
 
     /// How the position "feels" to this player, from the side to move's view.
@@ -65,7 +66,11 @@ impl<'a> Mind<'a> {
         w[eval::Concept::Material as usize] = 1.0;
         let mut v = bd.weighted(&w);
         let mut r = Rng::new(b.hash ^ self.seed.rotate_left(17));
-        v += (r.gauss() * self.persona.eval_noise_cp * self.sloppy) as i32;
+        // Heavy-tailed misjudgement: most positions are read about right, a few
+        // are badly misread (same overall variance as a plain gaussian).
+        let g = r.gauss();
+        let scale = if r.f32() < 0.12 { 2.45 } else { 0.62 };
+        v += (g * scale * self.persona.eval_noise_cp * self.sloppy) as i32;
         if b.side == WHITE {
             v
         } else {
@@ -154,7 +159,7 @@ impl<'a> Mind<'a> {
             .map(|(p, &lp)| {
                 let after = b.make(p.mv);
                 let mut s = -self.feel(&after) as f32 + nat_w * lp;
-                s += p.salience * self.persona.forcing_attraction;
+                s += p.salience * (self.persona.forcing_attraction + 25.0 * self.press);
                 // "Can it just be taken?" Noticed as often as threats are.
                 if let Some(loss) = en_prise(&after, p.mv.to) {
                     if self.rng.chance(self.persona.p_see_threat) {
@@ -174,7 +179,7 @@ impl<'a> Mind<'a> {
 
         // Sample without replacement, softmax at the persona's temperature.
         let k = k.max(1).min(scored.len());
-        let temp = (self.persona.intuition_temp * self.sloppy).max(1.0);
+        let temp = (0.8 * self.persona.intuition_temp * self.sloppy * (1.0 - 0.4 * self.press)).max(1.0);
         let mut chosen = vec![];
         for _ in 0..k {
             let maxs = scored.iter().map(|x| x.0).fold(f32::MIN, f32::max);
@@ -266,6 +271,8 @@ impl<'a> Mind<'a> {
         // Players defend lost positions worse than they play level ones: once clearly
         // worse, attention and effort drop and errors grow.
         self.sloppy = 1.0 + 1.5 * ((-feel_now - 150) as f32 / 750.0).clamp(0.0, 1.0);
+        // ...and smell blood once clearly winning: focused, forcing, going for the king.
+        self.press = env_scale("HL_PRESS") * ((feel_now - 300) as f32 / 600.0).clamp(0.0, 1.0);
         let concepts = self.main_concepts(b);
         trace.push(format!(
             "I notice {} of {} legal moves. Position feels {}{}.",
