@@ -469,9 +469,13 @@ impl<'a> Mind<'a> {
         // this side's colour) decides which kind of player this is today.
         let hist = self.searcher.game_history();
         let game_id = hist.get(10.min(hist.len().saturating_sub(1))).copied().unwrap_or(0) ^ (b.side as u64 * 0x9E37_79B9_7F4A_7C15);
-        let plays_on = (game_id.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) % 100 < 45;
+        let plays_on = (game_id.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) % 100 < 38;
         let hazard = 0.35 / (1.0 + (-((hopeless as f32) - 900.0) / 150.0).exp());
-        let resign = !plays_on && hopeless > 500 && self.rng.chance(hazard);
+        // Even stubborn players rarely wait to be mated with a bare king against
+        // a queen or rook: twice as many HL games as human ones went that far.
+        let has = |c: u8, kinds: &[u8]| b.sq.iter().any(|&x| x != 0 && piece_color(x) == c && kinds.contains(&piece_type(x)));
+        let bare = !has(b.side, &[KNIGHT, BISHOP, ROOK, QUEEN]) && has(1 - b.side, &[ROOK, QUEEN]);
+        let resign = hopeless > 500 && ((!plays_on && self.rng.chance(hazard)) || (bare && hopeless > 1200 && self.rng.chance(0.12)));
         if resign {
             trace.push(format!("This is hopeless ({}). I resign.", fmt_cp(-hopeless)));
         }
