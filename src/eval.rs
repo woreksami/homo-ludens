@@ -102,6 +102,22 @@ pub fn breakdown(b: &Board) -> Breakdown {
         }
     }
     let mut bishops = [0; 2];
+    // Squares each side's pawns attack: mobility only counts squares a piece can
+    // safely use, and a pawn whose advance square is covered is backward.
+    let mut patt = [0u64; 2];
+    for s in 0..64u8 {
+        let p = b.sq[s as usize];
+        if p != 0 && piece_type(p) == PAWN {
+            let c = piece_color(p);
+            let (f, r) = (file_of(s), rank_of(s));
+            let r2 = if c == WHITE { r + 1 } else { r - 1 };
+            for df in [-1i8, 1] {
+                if let Some(q) = sq_at(f + df, r2) {
+                    patt[c as usize] |= 1u64 << q;
+                }
+            }
+        }
+    }
 
     for s in 0..64u8 {
         let p = b.sq[s as usize];
@@ -126,6 +142,20 @@ pub fn breakdown(b: &Board) -> Breakdown {
                 let right = if fu < 7 { pawn_files[c as usize][fu + 1] } else { 0 };
                 if left == 0 && right == 0 {
                     acc[Concept::PawnStructure as usize].add(sign, 1, ISOLATED);
+                } else {
+                    // Backward: no friendly pawn beside or behind it, and its advance
+                    // square is covered by an enemy pawn.
+                    let fwd: i8 = if c == WHITE { 1 } else { -1 };
+                    let support = [f - 1, f + 1].iter().any(|&ff| {
+                        (0..8i8).any(|rr| (if c == WHITE { rr <= r } else { rr >= r }) && sq_at(ff, rr).map_or(false, |q| b.sq[q as usize] == make_piece(c, PAWN)))
+                    });
+                    if !support {
+                        if let Some(stop) = sq_at(f, r + fwd) {
+                            if patt[(c ^ 1) as usize] & (1u64 << stop) != 0 {
+                                acc[Concept::PawnStructure as usize].add(sign, 1, BACKWARD);
+                            }
+                        }
+                    }
                 }
                 if is_passed(b, s, c) {
                     let rr = if c == WHITE { r } else { 7 - r };
@@ -136,15 +166,24 @@ pub fn breakdown(b: &Board) -> Breakdown {
                 }
             }
             KNIGHT => {
-                let n = knight_targets(s).iter().filter(|&&q| own_free(b, q, c)).count() as i32;
+                let safe = patt[(c ^ 1) as usize];
+                let n = knight_targets(s).iter().filter(|&&q| own_free(b, q, c) && safe & (1u64 << q) == 0).count() as i32;
                 acc[Concept::Mobility as usize].add(sign, n, (MOB_MG[0], MOB_EG[0]));
+                let hits = knight_targets(s).iter().filter(|&&q| big_enemy(b, q, c)).count() as i32;
+                if hits > 0 {
+                    acc[Concept::Mobility as usize].add(sign, hits, MINOR_THREAT);
+                }
             }
             BISHOP => {
                 bishops[c as usize] += 1;
-                acc[Concept::Mobility as usize].add(sign, slider_mobility(b, s, c, &BISHOP_D), (MOB_MG[1], MOB_EG[1]));
+                let (m, hits) = slider_info(b, s, c, &BISHOP_D, patt[(c ^ 1) as usize]);
+                acc[Concept::Mobility as usize].add(sign, m, (MOB_MG[1], MOB_EG[1]));
+                if hits > 0 {
+                    acc[Concept::Mobility as usize].add(sign, hits, MINOR_THREAT);
+                }
             }
             ROOK => {
-                acc[Concept::Mobility as usize].add(sign, slider_mobility(b, s, c, &ROOK_D), (MOB_MG[2], MOB_EG[2]));
+                acc[Concept::Mobility as usize].add(sign, slider_info(b, s, c, &ROOK_D, patt[(c ^ 1) as usize]).0, (MOB_MG[2], MOB_EG[2]));
                 let fu = f as usize;
                 if pawn_files[c as usize][fu] == 0 {
                     let w = if pawn_files[(c ^ 1) as usize][fu] == 0 { ROOK_OPEN } else { ROOK_HALF_OPEN };
@@ -152,7 +191,8 @@ pub fn breakdown(b: &Board) -> Breakdown {
                 }
             }
             QUEEN => {
-                let m = slider_mobility(b, s, c, &BISHOP_D) + slider_mobility(b, s, c, &ROOK_D);
+                let safe = patt[(c ^ 1) as usize];
+                let m = slider_info(b, s, c, &BISHOP_D, safe).0 + slider_info(b, s, c, &ROOK_D, safe).0;
                 acc[Concept::Mobility as usize].add(sign, m, (MOB_MG[3], MOB_EG[3]));
             }
             KING => {
@@ -274,6 +314,35 @@ fn own_free(b: &Board, sq: u8, c: u8) -> bool {
     p == 0 || piece_color(p) != c
 }
 
+/// An enemy rook or queen on this square.
+fn big_enemy(b: &Board, q: u8, c: u8) -> bool {
+    let p = b.sq[q as usize];
+    p != 0 && piece_color(p) != c && (piece_type(p) == ROOK || piece_type(p) == QUEEN)
+}
+
+/// Safe squares a slider reaches (not covered by enemy pawns), and how many enemy
+/// rooks/queens it attacks.
+fn slider_info(b: &Board, s: u8, c: u8, dirs: &[(i8, i8)], unsafe_sq: u64) -> (i32, i32) {
+    let (mut n, mut hits) = (0, 0);
+    for &(df, dr) in dirs {
+        for q in ray(s, df, dr) {
+            let p = b.sq[q as usize];
+            let ok = unsafe_sq & (1u64 << q) == 0;
+            if p == 0 {
+                n += ok as i32;
+            } else {
+                if piece_color(p) != c {
+                    n += ok as i32;
+                    hits += big_enemy(b, q, c) as i32;
+                }
+                break;
+            }
+        }
+    }
+    (n, hits)
+}
+
+#[allow(dead_code)]
 fn slider_mobility(b: &Board, s: u8, c: u8, dirs: &[(i8, i8)]) -> i32 {
     let mut n = 0;
     for &(df, dr) in dirs {

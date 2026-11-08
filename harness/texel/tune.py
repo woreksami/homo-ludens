@@ -56,6 +56,8 @@ def initial():
     mg[F.TEMPO] = eg[F.TEMPO] = 10
     mg[F.CASTLE], eg[F.CASTLE] = 10, 0
     mg[F.UNDEV], eg[F.UNDEV] = -10, 0
+    mg[F.MTHREAT], eg[F.MTHREAT] = 30, 20
+    mg[F.BACKWARD] = eg[F.BACKWARD] = -8
     return mg, eg
 
 
@@ -158,6 +160,8 @@ pub const ROOK_SEVENTH: (i32, i32) = ({mg[F.ROOK7]}, {eg[F.ROOK7]});
 pub const TEMPO: (i32, i32) = ({mg[F.TEMPO]}, {eg[F.TEMPO]});
 pub const CASTLE_RIGHTS: (i32, i32) = ({mg[F.CASTLE]}, {eg[F.CASTLE]});
 pub const UNDEVELOPED: (i32, i32) = ({mg[F.UNDEV]}, {eg[F.UNDEV]});
+pub const MINOR_THREAT: (i32, i32) = ({mg[F.MTHREAT]}, {eg[F.MTHREAT]});
+pub const BACKWARD: (i32, i32) = ({mg[F.BACKWARD]}, {eg[F.BACKWARD]});
 """
     path.write_text(s)
 

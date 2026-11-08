@@ -495,7 +495,7 @@ impl<'a> Mind<'a> {
         // Titled players almost never play on to mate (~10-15% of decided games end
         // in mate) and resign at a few pawns down, not twelve.
         let pro = ((self.persona.elo - 1800.0) / 1000.0).clamp(0.0, 1.0);
-        let plays_on = (game_id.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) % 100 < (38.0 - 30.0 * pro) as u64;
+        let plays_on = (game_id.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) % 100 < (58.0 - 50.0 * pro) as u64;
         let mid = 900.0 - 200.0 * pro;
         let hazard = 0.35 / (1.0 + (-((hopeless as f32) - mid) / 150.0).exp());
         // Even stubborn players rarely wait to be mated with a bare king against

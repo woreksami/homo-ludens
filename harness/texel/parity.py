@@ -15,7 +15,8 @@ mg[F.MOB:F.MOB+4] = nums("MOB_MG")[-4:]; eg[F.MOB:F.MOB+4] = nums("MOB_EG")[-4:]
 mg[F.PASSED:F.PASSED+6] = nums("PASSED_MG")[-6:]; eg[F.PASSED:F.PASSED+6] = nums("PASSED_EG")[-6:]
 for t, name in [(F.DOUBLED, "DOUBLED"), (F.ISOLATED, "ISOLATED"), (F.SHIELD1, "SHIELD1"), (F.SHIELD2, "SHIELD2"), (F.KOPEN, "KING_OPEN_FILE"),
                 (F.KATT, "KING_ATTACK"), (F.ROOK_OPEN, "ROOK_OPEN"), (F.ROOK_HALF, "ROOK_HALF_OPEN"), (F.BPAIR, "BISHOP_PAIR"),
-                (F.PTHREAT, "PAWN_THREAT"), (F.OUTPOST, "OUTPOST"), (F.SUPPORTED, "SUPPORTED"), (F.ROOK7, "ROOK_SEVENTH"), (F.TEMPO, "TEMPO")]:
+                (F.PTHREAT, "PAWN_THREAT"), (F.OUTPOST, "OUTPOST"), (F.SUPPORTED, "SUPPORTED"), (F.ROOK7, "ROOK_SEVENTH"), (F.TEMPO, "TEMPO"),
+                (F.CASTLE, "CASTLE_RIGHTS"), (F.UNDEV, "UNDEVELOPED"), (F.MTHREAT, "MINOR_THREAT"), (F.BACKWARD, "BACKWARD")]:
     a, b = nums(name)[-2:]; mg[t], eg[t] = a, b
 fens = [json.loads(l)["fen"] for l in open("reports/t_v26/analysis_50000.jsonl")]
 random.Random(0).shuffle(fens); fens = fens[:300]

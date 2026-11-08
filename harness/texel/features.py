@@ -31,7 +31,9 @@ ROOK7 = SUPPORTED + 1        # rook on the 7th
 TEMPO = ROOK7 + 1            # side to move
 CASTLE = TEMPO + 1           # castling rights kept (count)
 UNDEV = CASTLE + 1           # minor piece still on its home square
-N_TERMS = UNDEV + 1
+MTHREAT = UNDEV + 1          # knight/bishop attacks an enemy rook or queen
+BACKWARD = MTHREAT + 1       # backward pawn
+N_TERMS = BACKWARD + 1
 
 PHASE_W = {chess.KNIGHT: 1, chess.BISHOP: 1, chess.ROOK: 2, chess.QUEEN: 4}
 BISHOP_D = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -60,23 +62,38 @@ def features(b: chess.Board) -> tuple[dict[int, float], int]:
         if p.piece_type == chess.PAWN:
             pawn_files[p.color][s % 8] += 1
     bishops = {chess.WHITE: 0, chess.BLACK: 0}
+    patt = {chess.WHITE: set(), chess.BLACK: set()}
+    for s0, p0 in pm.items():
+        if p0.piece_type == chess.PAWN:
+            r2 = s0 // 8 + (1 if p0.color == chess.WHITE else -1)
+            for df in (-1, 1):
+                q = sq_at(s0 % 8 + df, r2)
+                if q is not None:
+                    patt[p0.color].add(q)
+
+    def big_enemy(q, c):
+        p = pm.get(q)
+        return p is not None and p.color != c and p.piece_type in (chess.ROOK, chess.QUEEN)
 
     def own_free(q, c):
         p = pm.get(q)
         return p is None or p.color != c
 
-    def slider(s, c, dirs):
+    def slider(s, c, dirs, hits=None):
         n = 0
         f0, r0 = s % 8, s // 8
+        bad = patt[not c]
         for df, dr in dirs:
             f, r = f0 + df, r0 + dr
             while (q := sq_at(f, r)) is not None:
                 p = pm.get(q)
                 if p is None:
-                    n += 1
+                    n += q not in bad
                 else:
                     if p.color != c:
-                        n += 1
+                        n += q not in bad
+                        if hits is not None and big_enemy(q, c):
+                            hits.append(q)
                     break
                 f, r = f + df, r + dr
         return n
@@ -95,6 +112,14 @@ def features(b: chess.Board) -> tuple[dict[int, float], int]:
             right = pawn_files[c][f + 1] if f < 7 else 0
             if left == 0 and right == 0:
                 add(ISOLATED, sign)
+            else:
+                support = any(
+                    (q := pm.get(rr * 8 + ff)) and q.piece_type == chess.PAWN and q.color == c
+                    for ff in (f - 1, f + 1) if 0 <= ff < 8
+                    for rr in range(8) if (rr <= r if c == chess.WHITE else rr >= r))
+                stop = sq_at(f, r + (1 if c == chess.WHITE else -1))
+                if not support and stop is not None and stop in patt[not c]:
+                    add(BACKWARD, sign)
             # passed: no enemy pawn ahead on this or adjacent files
             passed = True
             for ff in (f - 1, f, f + 1):
@@ -113,11 +138,18 @@ def features(b: chess.Board) -> tuple[dict[int, float], int]:
                 if 1 <= rr <= 6:
                     add(PASSED + rr - 1, sign)
         elif k == chess.KNIGHT:
-            n = sum(1 for df, dr in KNIGHT_D if (q := sq_at(f + df, r + dr)) is not None and own_free(q, c))
+            tg = [q for df, dr in KNIGHT_D if (q := sq_at(f + df, r + dr)) is not None]
+            n = sum(1 for q in tg if own_free(q, c) and q not in patt[not c])
             add(MOB + 0, sign * n)
+            h = sum(1 for q in tg if big_enemy(q, c))
+            if h:
+                add(MTHREAT, sign * h)
         elif k == chess.BISHOP:
             bishops[c] += 1
-            add(MOB + 1, sign * slider(s, c, BISHOP_D))
+            hl = []
+            add(MOB + 1, sign * slider(s, c, BISHOP_D, hl))
+            if hl:
+                add(MTHREAT, sign * len(hl))
         elif k == chess.ROOK:
             add(MOB + 2, sign * slider(s, c, ROOK_D))
             if pawn_files[c][f] == 0:
