@@ -24,7 +24,12 @@ KATT = KOPEN + 1
 ROOK_OPEN = KATT + 1
 ROOK_HALF = ROOK_OPEN + 1
 BPAIR = ROOK_HALF + 1
-N_TERMS = BPAIR + 1
+PTHREAT = BPAIR + 1          # pawn attacks an enemy piece
+OUTPOST = PTHREAT + 1        # knight on rel. rank 4-6, pawn-defended, no enemy pawn can chase it
+SUPPORTED = OUTPOST + 1      # pawn defended by a pawn
+ROOK7 = SUPPORTED + 1        # rook on the 7th
+TEMPO = ROOK7 + 1            # side to move
+N_TERMS = TEMPO + 1
 
 PHASE_W = {chess.KNIGHT: 1, chess.BISHOP: 1, chess.ROOK: 2, chess.QUEEN: 4}
 BISHOP_D = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -134,6 +139,34 @@ def features(b: chess.Board) -> tuple[dict[int, float], int]:
                     add(KOPEN, sign)
             att = sum(1 for df, dr in KING_D if (q := sq_at(f + df, r + dr)) is not None and b.is_attacked_by(not c, q))
             add(KATT, sign * att * att)
+    def pawn_at(f, r, c):
+        q = sq_at(f, r)
+        p = pm.get(q) if q is not None else None
+        return p is not None and p.piece_type == chess.PAWN and p.color == c
+
+    for s, p in pm.items():
+        c = p.color
+        sign = 1 if c == chess.WHITE else -1
+        f, r = s % 8, s // 8
+        fwd = 1 if c == chess.WHITE else -1
+        rr = r if c == chess.WHITE else 7 - r
+        if p.piece_type == chess.PAWN:
+            for df in (-1, 1):
+                q = sq_at(f + df, r + fwd)
+                t = pm.get(q) if q is not None else None
+                if t and t.color != c and t.piece_type not in (chess.PAWN, chess.KING):
+                    add(PTHREAT, sign)
+            if pawn_at(f - 1, r - fwd, c) or pawn_at(f + 1, r - fwd, c):
+                add(SUPPORTED, sign)
+        elif p.piece_type == chess.KNIGHT and 3 <= rr <= 5:
+            if pawn_at(f - 1, r - fwd, c) or pawn_at(f + 1, r - fwd, c):
+                chase = any(pawn_at(ff, r2, not c) for ff in (f - 1, f + 1) for r2 in range(8)
+                            if (r2 > r if c == chess.WHITE else r2 < r))
+                if not chase:
+                    add(OUTPOST, sign)
+        elif p.piece_type == chess.ROOK and rr == 6:
+            add(ROOK7, sign)
+    add(TEMPO, 1 if b.turn == chess.WHITE else -1)
     for c in (chess.WHITE, chess.BLACK):
         sign = 1 if c == chess.WHITE else -1
         extra = sum(n - 1 for n in pawn_files[c] if n > 1)

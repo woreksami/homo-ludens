@@ -163,6 +163,47 @@ pub fn breakdown(b: &Board) -> Breakdown {
             _ => {}
         }
     }
+    // Threats, outposts, pawn chains, rooks on the seventh, side to move.
+    let pawn_at = |f: i8, r: i8, c: u8| -> bool {
+        (0..8).contains(&f) && (0..8).contains(&r) && b.sq[(r * 8 + f) as usize] == make_piece(c, PAWN)
+    };
+    for s in 0..64u8 {
+        let p = b.sq[s as usize];
+        if p == 0 {
+            continue;
+        }
+        let c = piece_color(p);
+        let sign = if c == WHITE { 1 } else { -1 };
+        let (f, r) = (file_of(s), rank_of(s));
+        let fwd: i8 = if c == WHITE { 1 } else { -1 };
+        let rr = if c == WHITE { r } else { 7 - r };
+        match piece_type(p) {
+            PAWN => {
+                for df in [-1i8, 1] {
+                    if let Some(q) = sq_at(f + df, r + fwd) {
+                        let t = b.sq[q as usize];
+                        if t != 0 && piece_color(t) != c && piece_type(t) != PAWN && piece_type(t) != KING {
+                            acc[Concept::Mobility as usize].add(sign, 1, PAWN_THREAT);
+                        }
+                    }
+                }
+                if pawn_at(f - 1, r - fwd, c) || pawn_at(f + 1, r - fwd, c) {
+                    acc[Concept::PawnStructure as usize].add(sign, 1, SUPPORTED);
+                }
+            }
+            KNIGHT if (3..=5).contains(&rr) => {
+                if pawn_at(f - 1, r - fwd, c) || pawn_at(f + 1, r - fwd, c) {
+                    let chase = [f - 1, f + 1].iter().any(|&ff| (0..8i8).any(|r2| (if c == WHITE { r2 > r } else { r2 < r }) && pawn_at(ff, r2, c ^ 1)));
+                    if !chase {
+                        acc[Concept::PieceSquares as usize].add(sign, 1, OUTPOST);
+                    }
+                }
+            }
+            ROOK if rr == 6 => acc[Concept::RookFiles as usize].add(sign, 1, ROOK_SEVENTH),
+            _ => {}
+        }
+    }
+    acc[Concept::PieceSquares as usize].add(if b.side == WHITE { 1 } else { -1 }, 1, TEMPO);
     for c in [WHITE, BLACK] {
         let sign = if c == WHITE { 1 } else { -1 };
         let extra: i32 = pawn_files[c as usize].iter().map(|&n| (n as i32 - 1).max(0)).sum();
@@ -287,7 +328,8 @@ mod tests {
 
     #[test]
     fn start_is_balanced() {
-        assert_eq!(evaluate(&Board::startpos()), 0);
+        // Only the side-to-move bonus separates the sides.
+        assert_eq!(evaluate(&Board::startpos()), TEMPO.0);
     }
 
     #[test]
