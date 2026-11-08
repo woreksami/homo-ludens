@@ -145,7 +145,9 @@ impl Persona {
             node_budget: curve(e, [5.0, 25.0, 100.0, 400.0, 2000.0, 8000.0, 20000.0, 50000.0]) as u32,
             p_forget: curve(e, [0.50, 0.35, 0.20, 0.12, 0.06, 0.03, 0.02, 0.0]),
             einstellung_cp: curve(e, [0.0, 20.0, 40.0, 50.0, 40.0, 30.0, 20.0, 5.0]),
-            satisfice_cp: curve(e, [300.0, 200.0, 120.0, 70.0, 40.0, 20.0, 10.0, 0.0]),
+            // Stop calculating once one move is clearly ahead. Strong players need a real
+            // gap before trusting it (a few cp is noise to them), weak players settle sooner.
+            satisfice_cp: curve(e, [300.0, 200.0, 120.0, 100.0, 100.0, 110.0, 130.0, 200.0]),
             p_rethink: curve(e, [0.05, 0.25, 0.55, 0.80, 0.92, 0.97, 0.99, 1.0]),
             knowledge,
             eval_noise_cp: env_scale("HL_NOISE_SCALE") * curve(e, [250.0, 150.0, 90.0, 55.0, 35.0, 22.0, 15.0, 5.0]),

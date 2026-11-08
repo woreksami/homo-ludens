@@ -532,7 +532,7 @@ impl<'a> Mind<'a> {
                 let greed = 1.0 + 1.2 * ((2200.0 - self.persona.elo) / 1200.0).clamp(0.0, 1.0);
                 // Strong players without increment keep a reserve for the ending:
                 // titled 3+0 players average ~0.7 of base/40 per move and rarely flag.
-                let greed = if inc <= 0.0 { greed - 0.35 * ((self.persona.elo - 2200.0) / 800.0).clamp(0.0, 1.0) } else { greed };
+                let greed = if inc <= 0.0 { greed - 0.45 * ((self.persona.elo - 2200.0) / 800.0).clamp(0.0, 1.0) } else { greed };
                 (greed * rem.max(0.0) / moves_left + 0.8 * inc, rem.max(0.0))
             }
             None => (4.0 * self.tc_scale.clamp(0.1, 20.0), f32::INFINITY),
@@ -571,13 +571,13 @@ impl<'a> Mind<'a> {
             // With an increment the clock is rarely tight, so premoves are much rarer
             // (titled 3+2: ~6% of moves under 0.5 s, vs ~18% at 3+0).
             let inc = self.clock.map_or(0.0, |c| c.1);
-            let base_p = (0.75 - 0.06 * allot).clamp(0.05, 0.6) * if inc > 0.0 { 0.3 } else { 1.0 };
+            let base_p = (0.75 - 0.06 * allot).clamp(0.05, 0.6) * if inc > 0.0 { 0.4 } else { 1.0 };
             let p_fast = base_p + if remaining < 20.0 { 0.2 } else { 0.0 };
             if self.rng.chance(p_fast) {
                 let u = self.rng.f32();
                 secs = 0.08 + 0.35 * u * u;
             }
-        } else if self.clock.map_or(false, |c| c.1 <= 0.0) && gap >= 60.0 && self.rng.chance(0.08) {
+        } else if self.clock.map_or(false, |c| c.1 <= 0.0) && gap >= 60.0 && self.rng.chance(0.15) {
             // Without increment players also bang out moves they half expected.
             secs = 0.25 + 0.25 * self.rng.f32();
         }

@@ -7,7 +7,7 @@ rng = random.Random(5); pos = []
 f = open(pgn)
 while (g := chess.pgn.read_game(f)):
     b = g.board(); tc = g.headers["TimeControl"]
-    elo = {True: int(g.headers["WhiteElo"]), False: int(g.headers["BlackElo"])}
+    elo = {True: min(3200, int(g.headers["WhiteElo"])), False: min(3200, int(g.headers["BlackElo"]))}
     ms_ = list(g.mainline_moves())
     for i, m in enumerate(ms_):
         if lo <= i < hi and rng.random() < 0.15: pos.append((b.copy(), m, elo[b.turn], tc))
