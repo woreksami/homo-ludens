@@ -283,7 +283,12 @@ impl<'a> Mind<'a> {
         let feel_now = self.feel(b);
         // Players defend lost positions worse than they play level ones: once clearly
         // worse, attention and effort drop and errors grow.
-        self.sloppy = 1.0 + 1.5 * ((-feel_now - 150) as f32 / 750.0).clamp(0.0, 1.0);
+        // Club players collapse once clearly lost (errors pile up fast); pros hold on.
+        let club = 1.0 - ((p.elo - 1800.0) / 800.0).clamp(0.0, 1.0);
+        self.sloppy = 1.0 + (1.5 + 2.5 * club) * ((-feel_now - 150) as f32 / 750.0).clamp(0.0, 1.0);
+        // ...and a lost club player stops checking and calculating carefully.
+        let demoralised = club * ((-feel_now - 300) as f32 / 600.0).clamp(0.0, 1.0);
+        self.budget = ((self.budget as f32) * (1.0 - 0.6 * demoralised)) as u32;
         // ...and smell blood once clearly winning: focused, forcing, going for the king.
         self.press = env_scale("HL_PRESS") * ((feel_now - 300) as f32 / 600.0).clamp(0.0, 1.0);
         let concepts = self.main_concepts(b);
@@ -393,7 +398,7 @@ impl<'a> Mind<'a> {
 
         // Stage 6a: blunder check.
         let mut chosen = 0;
-        if self.rng.chance(p.p_blunder_check) {
+        if self.rng.chance(p.p_blunder_check * (1.0 - 0.6 * demoralised)) {
             while chosen < cands.len() {
                 match self.blunder_check(b, &cands[chosen].clone()) {
                     Some(msg) if chosen + 1 < cands.len() => {
@@ -497,7 +502,9 @@ impl<'a> Mind<'a> {
         let pro = ((self.persona.elo - 1800.0) / 1000.0).clamp(0.0, 1.0);
         let plays_on = (game_id.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) % 100 < (58.0 - 50.0 * pro) as u64;
         let mid = 900.0 - 200.0 * pro;
-        let hazard = 0.35 / (1.0 + (-((hopeless as f32) - mid) / 150.0).exp());
+        // Club players resign sooner after a decisive loss (human median about -9.5).
+            let clubr = 1.0 - pro;
+            let hazard = (0.35 + 0.45 * clubr) / (1.0 + (-((hopeless as f32) - (mid - 150.0 * clubr)) / 150.0).exp());
         // Even stubborn players rarely wait to be mated with a bare king against
         // a queen or rook: twice as many HL games as human ones went that far.
         let has = |c: u8, kinds: &[u8]| b.sq.iter().any(|&x| x != 0 && piece_color(x) == c && kinds.contains(&piece_type(x)));
