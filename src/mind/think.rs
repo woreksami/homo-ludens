@@ -106,6 +106,19 @@ impl<'a> Mind<'a> {
         let in_check = b.in_check();
         let stand = self.feel(b);
         if depth == 0 || self.nodes >= self.budget {
+            // At the end of a line a player still sees that hanging material can
+            // be taken back ("...Qxd5, exd5"): resolve the best winning capture
+            // they notice, instead of stopping on the opponent's grab.
+            if !in_check {
+                let mut gain = 0;
+                for m in b.legal_captures() {
+                    let g = crate::see::see(b, m);
+                    if g > gain && self.rng.chance(self.persona.p_see_capture) {
+                        gain = g;
+                    }
+                }
+                return stand + gain;
+            }
             return stand;
         }
         let mut best = if in_check { -INF } else { stand };
@@ -307,7 +320,7 @@ impl<'a> Mind<'a> {
                 c.line = line;
             }
             cands.sort_by_key(|c| -c.value);
-            if cands.len() >= 2 && cands[0].value - cands[1].value > p.satisfice_cp as i32 && depth >= 2 {
+            if cands.len() >= 2 && cands[0].value - cands[1].value > p.satisfice_cp as i32 && depth >= 2.max(p.calc_depth.min(8) / 2) {
                 trace.push(format!("{} is clearly best to me; no need to look deeper.", san(b, cands[0].mv)));
                 break;
             }

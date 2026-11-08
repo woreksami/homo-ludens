@@ -84,7 +84,7 @@ class Bot:
             e.set_option("UCI_Elo", elo)
             e.set_option("Seed", seed)
             e.set_option("SimTimeControl", tc)
-            r = e.play(start_fen, moves, go=f"movetime 200 {clock}".strip())
+            r = e.play(start_fen, moves, go=f"movetime {getattr(self.args, 'hl_ms', 200)} {clock}".strip())
             return r.move, (r.think_ms or 0) / 1000, "resign" in r.trace
         r = e.play(start_fen, moves, go=f"movetime {self.args.engine_ms}")
         return r.move, None, False
@@ -154,6 +154,20 @@ def replay(human: chess.pgn.Game, bot: Bot, game_no: int) -> chess.pgn.Game:
     return out
 
 
+_BOT = None
+
+
+def _init_worker(kind, args):
+    global _BOT
+    _BOT = Bot(kind, args)
+
+
+def _play(job):
+    import io
+    i, text = job
+    return str(replay(chess.pgn.read_game(io.StringIO(text)), _BOT, i))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pgn", required=True, type=Path)
@@ -166,6 +180,8 @@ def main():
     ap.add_argument("--bots", default="homo_ludens,maia,engine")
     ap.add_argument("--engine-games", type=int, default=60, help="cap for the slow full-strength control")
     ap.add_argument("--engine-ms", type=int, default=100)
+    ap.add_argument("--hl-ms", type=int, default=200, help="real compute per Homo Ludens move")
+    ap.add_argument("--jobs", type=int, default=1, help="parallel Homo Ludens games")
     ap.add_argument("--seed", type=int, default=3)
     ap.add_argument("--allow-resign", action="store_true", help="let the engine resign (off: the operator resigns on real accounts)")
     ap.add_argument("--out-dir", type=Path, default=Path("reports/anticheat"))
@@ -182,6 +198,15 @@ def main():
         subset = humans
         if kind == "engine":
             subset = random.Random(args.seed).sample(humans, min(args.engine_games, len(humans)))
+        if kind == "homo_ludens" and args.jobs > 1:
+            bot.close()
+            from multiprocessing import Pool
+            with Pool(args.jobs, initializer=_init_worker, initargs=(kind, args)) as pool, open(args.out_dir / f"{kind}.pgn", "w") as f:
+                for i, g in enumerate(pool.imap(_play, [(i, str(h)) for i, h in enumerate(subset)])):
+                    print(g, file=f, end="\n\n")
+                    if (i + 1) % 25 == 0:
+                        print(f"{kind}: {i + 1}/{len(subset)} games", file=sys.stderr)
+            continue
         with open(args.out_dir / f"{kind}.pgn", "w") as f:
             for i, h in enumerate(subset):
                 print(replay(h, bot, i), file=f, end="\n\n")

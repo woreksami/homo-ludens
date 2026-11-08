@@ -68,6 +68,7 @@ def main():
     ap.add_argument("--lr", type=float, default=2.0)
     ap.add_argument("--l2", type=float, default=1e-7, help="pull toward the starting weights")
     ap.add_argument("--out", default="src/eval_params.rs")
+    ap.add_argument("--fixed-k", type=float, default=0.0, help="use this K instead of fitting it (SF-labelled data)")
     args = ap.parse_args()
     d = np.load(ROOT / args.data)
     X, ph, y = d["X"].astype(np.float64), d["ph"] / 24.0, d["y"].astype(np.float64)
@@ -79,7 +80,7 @@ def main():
     mg, eg = mg0.copy(), eg0.copy()
     e0 = evals(X[tr], ph[tr], mg, eg)
     Ks = np.linspace(0.3, 2.0, 35)
-    K = float(Ks[np.argmin([loss(e0, y[tr], k) for k in Ks])])
+    K = args.fixed_k or float(Ks[np.argmin([loss(e0, y[tr], k) for k in Ks])])
     print(f"{n} positions; K = {K:.2f}; start loss train {loss(e0, y[tr], K):.5f} val {loss(evals(X[val], ph[val], mg, eg), y[val], K):.5f}", file=sys.stderr)
     # The king has no material term; its PST must not drift as a whole.
     w = np.concatenate([mg, eg])
