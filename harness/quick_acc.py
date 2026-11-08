@@ -13,7 +13,7 @@ while (g := chess.pgn.read_game(f)):
     b = g.board(); moves = list(g.mainline_moves()); tc = g.headers.get("TimeControl", "180+0")
     elo = {True: int(g.headers["WhiteElo"]), False: int(g.headers["BlackElo"])}
     for i, m in enumerate(moves):
-        if 10 <= i < min(len(moves) - 2, 80) and rng.random() < 0.08:
+        if int(os.environ.get('PLYMIN', 10)) <= i < min(len(moves) - 2, int(os.environ.get('PLYMAX', 80))) and rng.random() < float(os.environ.get('PSAMP', 0.08)):
             pos.append((b.copy(), m, elo[b.turn], tc, i))
         b.push(m)
 rng.shuffle(pos); pos = pos[:n]
@@ -31,7 +31,7 @@ for k, (b, hm, elo, tc, ply) in enumerate(pos):
     info = sf.analyse(b, lim)
     best = info["pv"][0]; bs = info["score"].pov(b.turn).score(mate_score=3000)
     base = int(tc.split("+")[0])
-    hl.configure({"UCI_Elo": elo, "Seed": 7 + k, "SimTimeControl": tc})
+    hl.configure({"UCI_Elo": min(3200, elo), "Seed": 7 + k, "SimTimeControl": tc})
     r = hl.play(b, chess.engine.Limit(time=float(os.environ.get("QT", "0.2")), white_clock=base * 0.6, black_clock=base * 0.6))
     phase = "open" if ply < 20 else ("mid" if ply < 60 else "late")
     for who, m in (("humans", hm), ("hl", r.move)):
@@ -40,4 +40,4 @@ sf.quit(); hl.quit()
 for who, rows in res.items():
     c = [x[0] for x in rows]
     print(f"{who:7s} ACPL {statistics.fmean(c):5.1f}  top {statistics.fmean(x[1] for x in rows):.3f}  inacc+ {statistics.fmean(x >= 50 for x in c):.3f}  "
-          + "  ".join(f"{ph} {statistics.fmean(x[0] for x in rows if x[2] == ph):5.1f}" for ph in ("open", "mid", "late")))
+          + "  ".join(f"{ph} {statistics.fmean(v):5.1f}" for ph in ("open", "mid", "late") if (v := [x[0] for x in rows if x[2] == ph])))

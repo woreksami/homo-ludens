@@ -10,7 +10,7 @@ from features import N_TERMS, features
 def work(item):
     fen, cp, best = item
     b = chess.Board(fen)
-    if b.is_check() or b.fullmove_number < 8:
+    if b.is_check() or b.fullmove_number < 5:
         return None
     m = chess.Move.from_uci(best)
     if b.is_capture(m) or m.promotion:

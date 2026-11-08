@@ -532,7 +532,7 @@ impl<'a> Mind<'a> {
                 let greed = 1.0 + 1.2 * ((2200.0 - self.persona.elo) / 1200.0).clamp(0.0, 1.0);
                 // Strong players without increment keep a reserve for the ending:
                 // titled 3+0 players average ~0.7 of base/40 per move and rarely flag.
-                let greed = if inc <= 0.0 { greed - 0.25 * ((self.persona.elo - 2200.0) / 800.0).clamp(0.0, 1.0) } else { greed };
+                let greed = if inc <= 0.0 { greed - 0.35 * ((self.persona.elo - 2200.0) / 800.0).clamp(0.0, 1.0) } else { greed };
                 (greed * rem.max(0.0) / moves_left + 0.8 * inc, rem.max(0.0))
             }
             None => (4.0 * self.tc_scale.clamp(0.1, 20.0), f32::INFINITY),
@@ -553,7 +553,9 @@ impl<'a> Mind<'a> {
             // and go quickly; time use peaks in the early middlegame.
             let t = ((move_no - 6.0) / 10.0).clamp(0.0, 1.0);
             let familiar = 0.3 + 0.7 * t * t * (3.0 - 2.0 * t);
-            (allot * criticality * familiar * (0.65 * self.rng.gauss()).exp()).min(5.0 * allot)
+            // Human think times are heavy-tailed (titled blitz: CV ~1.3-1.4 per game);
+            // sigma 0.9 with the mean kept by exp(-(0.9^2 - 0.65^2)/2).
+            (0.82 * allot * criticality * familiar * (0.9 * self.rng.gauss()).exp()).min(6.0 * allot)
         };
         // Perception plus motor time: online players rarely move in under ~0.4 s
         // (premoves aside), except when the clock is nearly gone.
@@ -575,6 +577,9 @@ impl<'a> Mind<'a> {
                 let u = self.rng.f32();
                 secs = 0.08 + 0.35 * u * u;
             }
+        } else if self.clock.map_or(false, |c| c.1 <= 0.0) && gap >= 60.0 && self.rng.chance(0.08) {
+            // Without increment players also bang out moves they half expected.
+            secs = 0.25 + 0.25 * self.rng.f32();
         }
         (secs.min(600.0) * 1000.0) as u64
     }

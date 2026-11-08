@@ -29,7 +29,9 @@ OUTPOST = PTHREAT + 1        # knight on rel. rank 4-6, pawn-defended, no enemy 
 SUPPORTED = OUTPOST + 1      # pawn defended by a pawn
 ROOK7 = SUPPORTED + 1        # rook on the 7th
 TEMPO = ROOK7 + 1            # side to move
-N_TERMS = TEMPO + 1
+CASTLE = TEMPO + 1           # castling rights kept (count)
+UNDEV = CASTLE + 1           # minor piece still on its home square
+N_TERMS = UNDEV + 1
 
 PHASE_W = {chess.KNIGHT: 1, chess.BISHOP: 1, chess.ROOK: 2, chess.QUEEN: 4}
 BISHOP_D = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -174,4 +176,12 @@ def features(b: chess.Board) -> tuple[dict[int, float], int]:
             add(DOUBLED, sign * extra)
         if bishops[c] >= 2:
             add(BPAIR, sign)
+        nr = int(b.has_kingside_castling_rights(c)) + int(b.has_queenside_castling_rights(c))
+        if nr:
+            add(CASTLE, sign * nr)
+        base = 0 if c == chess.WHITE else 56
+        home = sum(1 for f, t in ((1, chess.KNIGHT), (6, chess.KNIGHT), (2, chess.BISHOP), (5, chess.BISHOP))
+                   if (q := pm.get(base + f)) and q.color == c and q.piece_type == t)
+        if home:
+            add(UNDEV, sign * home)
     return x, phase(b)

@@ -213,6 +213,20 @@ pub fn breakdown(b: &Board) -> Breakdown {
         if bishops[c as usize] >= 2 {
             acc[Concept::BishopPair as usize].add(sign, 1, BISHOP_PAIR);
         }
+        // Opening: castling still possible, minor pieces still at home.
+        let rights = if c == WHITE { WK_CASTLE | WQ_CASTLE } else { BK_CASTLE | BQ_CASTLE };
+        let n_rights = (b.castling & rights).count_ones() as i32;
+        if n_rights > 0 {
+            acc[Concept::KingSafety as usize].add(sign, n_rights, CASTLE_RIGHTS);
+        }
+        let base = if c == WHITE { 0usize } else { 56 };
+        let home = [(1, KNIGHT), (6, KNIGHT), (2, BISHOP), (5, BISHOP)]
+            .iter()
+            .filter(|&&(f, t)| b.sq[base + f] == make_piece(c, t))
+            .count() as i32;
+        if home > 0 {
+            acc[Concept::PieceSquares as usize].add(sign, home, UNDEVELOPED);
+        }
     }
 
     let mut t = [0i32; N_CONCEPTS];
