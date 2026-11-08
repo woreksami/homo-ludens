@@ -61,7 +61,7 @@ impl Book {
     pub fn pick(&self, b: &Board, elo: f32, rng: &mut Rng) -> Option<(Move, f32)> {
         let w = self.weights(b, elo);
         let total: f32 = w.iter().map(|x| x.1).sum();
-        if total < 1.5 {
+        if total < 1.5 * crate::mind::persona::env_scale("HL_BOOK_MIN") {
             return None;
         }
         let mut r = rng.f32() * total;

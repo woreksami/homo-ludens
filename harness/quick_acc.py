@@ -39,5 +39,5 @@ for k, (b, hm, elo, tc, ply) in enumerate(pos):
 sf.quit(); hl.quit()
 for who, rows in res.items():
     c = [x[0] for x in rows]
-    print(f"{who:7s} ACPL {statistics.fmean(c):5.1f}  top {statistics.fmean(x[1] for x in rows):.3f}  inacc+ {statistics.fmean(x >= 50 for x in c):.3f}  "
+    print(f"{who:7s} ACPL {statistics.fmean(c):5.1f}  top {statistics.fmean(x[1] for x in rows):.3f}  inacc+ {statistics.fmean(x >= 50 for x in c):.3f}  exact {statistics.fmean(x < 10 for x in c):.3f}  10-100 {statistics.fmean(10 <= x < 100 for x in c):.3f}  300+ {statistics.fmean(x >= 300 for x in c):.3f}  "
           + "  ".join(f"{ph} {statistics.fmean(v):5.1f}" for ph in ("open", "mid", "late") if (v := [x[0] for x in rows if x[2] == ph])))

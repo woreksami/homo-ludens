@@ -242,6 +242,17 @@ pub fn env_scale(name: &str) -> f32 {
     1.0
 }
 
+/// Like env_scale, but 0 when unset.
+pub fn env_scale0(name: &str) -> f32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Ok(v) = std::env::var(name) {
+            return v.parse().unwrap_or(0.0);
+        }
+    }
+    0.0
+}
+
 fn nat_scale() -> f32 {
     #[cfg(not(target_arch = "wasm32"))]
     {

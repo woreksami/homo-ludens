@@ -5,7 +5,7 @@
 
 use super::notation::{san, san_line};
 use super::perception::{en_prise, perceive, perceive_replies, Percept, Reason};
-use super::persona::{env_scale, Persona, Rng};
+use super::persona::{env_scale, env_scale0, Persona, Rng};
 use crate::board::*;
 use crate::eval::{self, CONCEPT_NAMES, N_CONCEPTS};
 use crate::search::{self, Limits, Searcher, INF, MATE};
@@ -232,6 +232,38 @@ impl<'a> Mind<'a> {
     }
 
     pub fn think(&mut self, b: &Board, limits: &Limits) -> Thought {
+        // Attention lapse: now and then a move is made on autopilot. The player stops
+        // scanning for the opponent's threats and long or backward moves, and calculates
+        // little. That's how club players hang pieces in otherwise decent games.
+        let p_lapse = 0.03 * env_scale("HL_LAPSE2") * (1.0 - ((self.persona.elo - 1000.0) / 1800.0).clamp(0.0, 1.0));
+        // A club player who is clearly lost stops looking at the board carefully.
+        let club = 1.0 - ((self.persona.elo - 1800.0) / 800.0).clamp(0.0, 1.0);
+        let lost = ((-self.feel(b) - 350) as f32 / 500.0).clamp(0.0, 1.0);
+        let p_lapse = p_lapse + 1.0 * env_scale("HL_GIVEUP") * club * lost;
+        if b.fullmove > 8 && self.rng.chance(p_lapse) {
+            let saved = self.persona.clone();
+            let q = &saved;
+            self.persona = Persona {
+                p_see_threat: q.p_see_threat * 0.3,
+                p_see_capture: q.p_see_capture * 0.8,
+                p_blind_quiet: q.p_blind_quiet.max(0.7),
+                p_blind_backward: (q.p_blind_backward + 0.4).min(0.9),
+                p_blind_long: (q.p_blind_long + 0.4).min(0.9),
+                p_blunder_check: 0.0,
+                verify_depth: 0,
+                calc_depth: (q.calc_depth / 2).max(1),
+                node_budget: q.node_budget / 4,
+                ..saved.clone()
+            };
+            let mut t = self.think_inner(b, limits);
+            self.persona = saved;
+            t.trace.push("(I wasn't really concentrating on that one.)".into());
+            return t;
+        }
+        self.think_inner(b, limits)
+    }
+
+    fn think_inner(&mut self, b: &Board, limits: &Limits) -> Thought {
         let mut trace = vec![];
         let p = self.persona.clone();
         self.nodes = 0;
@@ -285,12 +317,25 @@ impl<'a> Mind<'a> {
         // worse, attention and effort drop and errors grow.
         // Club players collapse once clearly lost (errors pile up fast); pros hold on.
         let club = 1.0 - ((p.elo - 1800.0) / 800.0).clamp(0.0, 1.0);
-        self.sloppy = 1.0 + (1.5 + 2.5 * club) * ((-feel_now - 150) as f32 / 750.0).clamp(0.0, 1.0);
+        self.sloppy = 1.0 + env_scale("HL_COLLAPSE") * (1.5 + 2.5 * club) * ((-feel_now - 150) as f32 / 750.0).clamp(0.0, 1.0);
         // ...and a lost club player stops checking and calculating carefully.
         let demoralised = club * ((-feel_now - 300) as f32 / 600.0).clamp(0.0, 1.0);
         self.budget = ((self.budget as f32) * (1.0 - 0.6 * demoralised)) as u32;
         // ...and smell blood once clearly winning: focused, forcing, going for the king.
+        // Attention comes and goes: most moves are played focused, a few on autopilot
+        // (no checking, little calculation). This gives human errors their shape:
+        // many exact moves, the occasional big lapse, few middling ones.
+        let lapse = self.rng.chance(0.01 * env_scale0("HL_LAPSE"));
+        if lapse {
+            self.sloppy *= 2.5;
+            self.budget = ((self.budget as f32) * 0.35) as u32;
+        } else {
+            self.sloppy *= env_scale("HL_FOCUS");
+        }
+        let demoralised = if lapse { 1.0 } else { demoralised };
         self.press = env_scale("HL_PRESS") * ((feel_now - 300) as f32 / 600.0).clamp(0.0, 1.0);
+        // Clearly winning, a club player calms down and plays cleaner, simpler moves.
+        self.sloppy *= 1.0 - env_scale0("HL_CALM") * club * self.press.min(1.0);
         let concepts = self.main_concepts(b);
         trace.push(format!(
             "I notice {} of {} legal moves. Position feels {}{}.",
@@ -398,7 +443,7 @@ impl<'a> Mind<'a> {
 
         // Stage 6a: blunder check.
         let mut chosen = 0;
-        if self.rng.chance(p.p_blunder_check * (1.0 - 0.6 * demoralised)) {
+        if self.rng.chance(p.p_blunder_check * (1.0 - if lapse { 1.0 } else { 0.6 * demoralised })) {
             while chosen < cands.len() {
                 match self.blunder_check(b, &cands[chosen].clone()) {
                     Some(msg) if chosen + 1 < cands.len() => {
@@ -536,7 +581,7 @@ impl<'a> Mind<'a> {
                 let moves_left = (40.0 - 0.6 * move_no).max(15.0);
                 // Club players budget optimistically and lose many games on time,
                 // especially in bullet; strong players manage the clock better.
-                let greed = 1.0 + 1.2 * ((2200.0 - self.persona.elo) / 1200.0).clamp(0.0, 1.0);
+                let greed = 1.0 + 0.36 * env_scale("HL_GREED") * ((2200.0 - self.persona.elo) / 1200.0).clamp(0.0, 1.0);
                 // Strong players without increment keep a reserve for the ending:
                 // titled 3+0 players average ~0.7 of base/40 per move and rarely flag.
                 let greed = if inc <= 0.0 { greed - 0.45 * ((self.persona.elo - 2200.0) / 800.0).clamp(0.0, 1.0) } else { greed };
