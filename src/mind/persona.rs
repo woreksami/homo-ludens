@@ -153,8 +153,8 @@ impl Persona {
             eval_noise_cp: env_scale("HL_NOISE_SCALE") * curve(e, [250.0, 150.0, 90.0, 55.0, 35.0, 22.0, 15.0, 5.0]),
             p_blunder_check: curve(e, [0.0, 0.25, 0.55, 0.80, 0.92, 0.97, 0.99, 1.0]),
             verify_depth: curve(e, [0.0, 0.0, 0.0, 0.0, 1.0, 3.0, 6.0, 14.0]).round() as u32,
-            verify_tolerance_cp: curve(e, [9999.0, 9999.0, 9999.0, 9999.0, 250.0, 120.0, 50.0, 10.0]),
-            style_margin_cp: curve(e, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0, 8.0]),
+            verify_tolerance_cp: curve(e, [9999.0, 9999.0, 9999.0, 9999.0, 250.0, 120.0, 50.0, 10.0]) * if e >= 2300.0 { env_scale("HL_TOL") } else { 1.0 },
+            style_margin_cp: env_scale("HL_STYLE") * curve(e, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0, 8.0]),
             engine_weight: curve(e, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
             naturalness_cp: nat_scale() * curve(e, [40.0, 40.0, 35.0, 30.0, 25.0, 20.0, 15.0, 0.0]),
         }

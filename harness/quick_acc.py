@@ -32,6 +32,7 @@ for k, (b, hm, elo, tc, ply) in enumerate(pos):
     best = info["pv"][0]; bs = info["score"].pov(b.turn).score(mate_score=3000)
     base = int(tc.split("+")[0])
     hl.configure({"UCI_Elo": min(3200, elo), "Seed": 7 + k, "SimTimeControl": tc})
+    if os.environ.get("RAW"): hl.configure({"UCI_LimitStrength": False})
     r = hl.play(b, chess.engine.Limit(time=float(os.environ.get("QT", "0.2")), white_clock=base * 0.6, black_clock=base * 0.6))
     phase = "open" if ply < 20 else ("mid" if ply < 60 else "late")
     for who, m in (("humans", hm), ("hl", r.move)):

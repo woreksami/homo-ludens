@@ -2,6 +2,7 @@
 
 pub mod book;
 pub mod natural;
+pub mod oracle;
 pub mod notation;
 pub mod perception;
 pub mod persona;

@@ -235,11 +235,19 @@ impl<'a> Mind<'a> {
         // Attention lapse: now and then a move is made on autopilot. The player stops
         // scanning for the opponent's threats and long or backward moves, and calculates
         // little. That's how club players hang pieces in otherwise decent games.
-        let p_lapse = 0.03 * env_scale("HL_LAPSE2") * (1.0 - ((self.persona.elo - 1000.0) / 1800.0).clamp(0.0, 1.0));
+        let p_lapse = env_scale("HL_LAPSE2") * (0.03 * (1.0 - ((self.persona.elo - 1000.0) / 1800.0).clamp(0.0, 1.0))).max(0.012 * env_scale0("HL_TOPLAPSE"));
         // A club player who is clearly lost stops looking at the board carefully.
         let club = 1.0 - ((self.persona.elo - 1800.0) / 800.0).clamp(0.0, 1.0);
         let lost = ((-self.feel(b) - 350) as f32 / 500.0).clamp(0.0, 1.0);
         let p_lapse = p_lapse + 1.0 * env_scale("HL_GIVEUP") * club * lost;
+        let behind = ((-self.feel(b) - 100) as f32 / 500.0).clamp(0.0, 1.0);
+        let p_lapse = p_lapse + crate::mind::persona::env_scale0("HL_TOPGIVEUP") * (1.0 - club) * behind;
+        // Strong players blunder where it is sharp or unbalanced and when short of time,
+        // hardly at all in quiet level positions with time in hand (Carlsen blitz: 0.5%
+        // of moves with 90 s+ left vs 3.8% under 15 s; 0.9% at level evals vs 4-5% at +-3).
+        let unbal = ((self.feel(b).abs() - 100) as f32 / 350.0).clamp(0.0, 1.0);
+        let short = match self.clock { Some((rem, inc)) => ((60.0 - (rem + 20.0 * inc)) / 50.0).clamp(0.0, 1.0), None => 0.0 };
+        let p_lapse = p_lapse + crate::mind::persona::env_scale0("HL_SHARPLAPSE") * (1.0 - club) * (0.5 * unbal + 0.5 * short);
         if b.fullmove > 8 && self.rng.chance(p_lapse) {
             let saved = self.persona.clone();
             let q = &saved;
@@ -253,6 +261,7 @@ impl<'a> Mind<'a> {
                 verify_depth: 0,
                 calc_depth: (q.calc_depth / 2).max(1),
                 node_budget: q.node_budget / 4,
+                engine_weight: 0.0,
                 ..saved.clone()
             };
             let mut t = self.think_inner(b, limits);
@@ -491,24 +500,45 @@ impl<'a> Mind<'a> {
         if p.engine_weight > 0.0 {
             let lim = Limits {
                 depth: limits.depth.or(Some((6.0 + 14.0 * p.engine_weight) as u32)),
-                movetime_ms: limits.movetime_ms.map(|t| t * 45 / 100),
+                movetime_ms: limits.movetime_ms.map(|t| ((t as f32) * (0.45 + 0.4 * env_scale0("HL_EGTIME") * ((12 - crate::eval::game_phase(b)) as f32 / 8.0).clamp(0.0, 1.0))) as u64),
                 nodes: limits.nodes,
                 root_moves: None,
             };
-            self.searcher.silent = true;
-            let full = self.searcher.search(b, lim);
-            self.searcher.silent = false;
-            // Compare the human choice with the engine's at the same depth and by the same method.
-            let pair = if full.best != best {
-                self.searcher.score_moves(b, &[best, full.best], full.depth.saturating_sub(1).max(1), Some(2 * full.nodes.max(10_000)), limits.movetime_ms.map(|t| t / 5))
+            // With an external oracle configured, it does the deep calculation.
+            let from_oracle = super::oracle::get().and_then(|o| {
+                let mut o = o.lock().ok()?;
+                let fen = b.to_fen();
+                let (em, es) = o.go(&fen, None)?;
+                let emv = b.parse_uci(&em)?;
+                let my = if emv == best { es } else { o.go(&fen, Some(&best.uci()))?.1 };
+                Some((emv, es, my))
+            });
+            let (full, my_score, engine_score) = if let Some((emv, es, my)) = from_oracle {
+                (search::SearchResult { best: emv, score: es, depth: 20, nodes: 0, pv: vec![emv], elapsed_ms: 0 }, my, es)
             } else {
-                vec![]
+                self.searcher.silent = true;
+                let full = self.searcher.search(b, lim);
+                self.searcher.silent = false;
+                let pair = if full.best != best {
+                    self.searcher.score_moves(b, &[best, full.best], full.depth.saturating_sub(1).max(1), Some(2 * full.nodes.max(10_000)), limits.movetime_ms.map(|t| t / 5))
+                } else {
+                    vec![]
+                };
+                let (my_score, engine_score) = match pair.as_slice() {
+                    [a, e] => (a.1, e.1),
+                    _ => (full.score, full.score),
+                };
+                (full, my_score, engine_score)
             };
-            let (my_score, engine_score) = match pair.as_slice() {
-                [a, e] => (a.1, e.1),
-                _ => (full.score, full.score),
-            };
-            if (my_score as f32) < engine_score as f32 - p.style_margin_cp && full.best != best {
+            // Not afraid of sacrifices that matter: when the deeper look shows that
+            // giving up material really works (a clear gain over the natural move),
+            // a strong player goes for it even where style would otherwise win.
+            let is_sac = full.best != best && crate::see::see(b, full.best) <= -150;
+            let sac_works = is_sac && engine_score >= my_score + (60.0 * env_scale("HL_SACGAIN")) as i32 && engine_score > -100;
+            if sac_works {
+                trace.push(format!("The sacrifice {} works; I go for it.", san(b, full.best)));
+            }
+            if ((my_score as f32) < engine_score as f32 - p.style_margin_cp || sac_works) && full.best != best {
                 trace.push(format!(
                     "Deeper calculation ({} plies) finds {} ({}) better than {} ({}).",
                     full.depth,
@@ -607,7 +637,12 @@ impl<'a> Mind<'a> {
             let familiar = 0.3 + 0.7 * t * t * (3.0 - 2.0 * t);
             // Human think times are heavy-tailed (titled blitz: CV ~1.3-1.4 per game);
             // sigma 0.9 with the mean kept by exp(-(0.9^2 - 0.65^2)/2).
-            (0.82 * allot * criticality * familiar * (0.9 * self.rng.gauss()).exp()).min(6.0 * allot)
+            {
+                // Top blitz players are burstier still (CV ~1.4): widen the spread, keep the mean.
+                let pro = ((self.persona.elo - 2200.0) / 800.0).clamp(0.0, 1.0);
+                let sig = 0.9 + 0.2 * pro * env_scale("HL_TSPREAD");
+                (0.82 * ((0.81 - sig * sig) / 2.0).exp() * allot * criticality * familiar * (sig * self.rng.gauss()).exp()).min(6.0 * allot)
+            }
         };
         // Perception plus motor time: online players rarely move in under ~0.4 s
         // (premoves aside), except when the clock is nearly gone.
@@ -629,7 +664,7 @@ impl<'a> Mind<'a> {
                 let u = self.rng.f32();
                 secs = 0.08 + 0.35 * u * u;
             }
-        } else if self.clock.map_or(false, |c| c.1 <= 0.0) && gap >= 60.0 && self.rng.chance(0.15) {
+        } else if self.clock.map_or(false, |c| c.1 <= 0.0) && gap >= 60.0 && self.rng.chance(0.15 + 0.12 * env_scale("HL_TFAST") * ((self.persona.elo - 2200.0) / 800.0).clamp(0.0, 1.0)) {
             // Without increment players also bang out moves they half expected.
             secs = 0.25 + 0.25 * self.rng.f32();
         }
