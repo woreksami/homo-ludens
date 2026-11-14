@@ -1,10 +1,6 @@
-"""Write a small SYNTHETIC PGN for testing the pipeline end to end.
-
-The games are Homo Ludens personas playing each other, with Lichess-style
-headers and [%clk] comments built from the simulated think times. They are
-for smoke-testing the harness only: grading the engine against its own games
-measures nothing about humans. Use real Lichess games (fetch_lichess.sh) for
-any result you report.
+"""Fake PGN for smoke-testing the pipeline: HL vs HL with lichess-style headers
+and [%clk] from the fake think times. Don't report anything measured on these,
+use real games (fetch_lichess.sh).
 """
 
 from __future__ import annotations

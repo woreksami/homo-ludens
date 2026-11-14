@@ -1,9 +1,5 @@
-//! Handcrafted evaluation split into named concepts.
-//!
-//! Every term is a human chess concept with a name. The full engine weighs all
-//! of them at 1.0. A simulated player of a given rating only "knows" some of
-//! them, with its own weights and noise (see `mind::persona`). That is the
-//! knowledge-gated evaluation from the blueprint (stage 5).
+//! Hand-written eval, split into named concepts. The full engine uses all of them;
+//! a persona only knows some (see mind::persona).
 
 use crate::board::*;
 
@@ -82,15 +78,11 @@ impl Acc {
     }
 }
 
-/// Full evaluation broken down by concept (White's point of view).
-///
-/// The terms and weights mirror harness/texel/features.py; the weights in
-/// `eval_params` are tuned on master games.
+/// Full eval by concept, white POV. Terms mirror harness/texel/features.py.
 pub fn breakdown(b: &Board) -> Breakdown {
     let phase = game_phase(b);
     let mut acc = [Acc::default(); N_CONCEPTS];
-    // The king's square table counts as piece placement in the middlegame
-    // and as king activity in the endgame.
+    // king table = placement in the mg, activity in the eg
     let mut king_pst_mg = 0;
     let mut king_pst_eg = 0;
 
@@ -102,8 +94,6 @@ pub fn breakdown(b: &Board) -> Breakdown {
         }
     }
     let mut bishops = [0; 2];
-    // Squares each side's pawns attack: mobility only counts squares a piece can
-    // safely use, and a pawn whose advance square is covered is backward.
     let mut patt = [0u64; 2];
     for s in 0..64u8 {
         let p = b.sq[s as usize];
@@ -143,8 +133,7 @@ pub fn breakdown(b: &Board) -> Breakdown {
                 if left == 0 && right == 0 {
                     acc[Concept::PawnStructure as usize].add(sign, 1, ISOLATED);
                 } else {
-                    // Backward: no friendly pawn beside or behind it, and its advance
-                    // square is covered by an enemy pawn.
+                    // backward: no pawn beside/behind it and its push square is hit by an enemy pawn
                     let fwd: i8 = if c == WHITE { 1 } else { -1 };
                     let support = [f - 1, f + 1].iter().any(|&ff| {
                         (0..8i8).any(|rr| (if c == WHITE { rr <= r } else { rr >= r }) && sq_at(ff, rr).map_or(false, |q| b.sq[q as usize] == make_piece(c, PAWN)))
@@ -203,7 +192,7 @@ pub fn breakdown(b: &Board) -> Breakdown {
             _ => {}
         }
     }
-    // Threats, outposts, pawn chains, rooks on the seventh, side to move.
+    // threats, outposts, chains, rook on 7th, tempo
     let pawn_at = |f: i8, r: i8, c: u8| -> bool {
         (0..8).contains(&f) && (0..8).contains(&r) && b.sq[(r * 8 + f) as usize] == make_piece(c, PAWN)
     };
@@ -253,7 +242,6 @@ pub fn breakdown(b: &Board) -> Breakdown {
         if bishops[c as usize] >= 2 {
             acc[Concept::BishopPair as usize].add(sign, 1, BISHOP_PAIR);
         }
-        // Opening: castling still possible, minor pieces still at home.
         let rights = if c == WHITE { WK_CASTLE | WQ_CASTLE } else { BK_CASTLE | BQ_CASTLE };
         let n_rights = (b.castling & rights).count_ones() as i32;
         if n_rights > 0 {
@@ -281,8 +269,7 @@ pub fn breakdown(b: &Board) -> Breakdown {
 const EVAL_CACHE_SIZE: usize = 1 << 16;
 
 thread_local! {
-    /// Recently evaluated positions (hash -> White's score). Searches evaluate
-    /// the same positions many times over; the static score never changes.
+    /// small eval cache (hash -> white score)
     static EVAL_CACHE: std::cell::RefCell<Vec<(u64, i32)>> = std::cell::RefCell::new(vec![(0, 0); EVAL_CACHE_SIZE]);
 }
 

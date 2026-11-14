@@ -1,8 +1,5 @@
-//! Board representation, FEN parsing, legal move generation and make-move.
-//!
-//! Design choice for P0: a 64-square mailbox with copy-make. It is simple,
-//! easy to verify with perft, and fast enough for a human-paced engine.
-//! A bitboard core can replace it later behind the same API.
+//! Board, FEN, movegen, make-move. Plain 64-square mailbox + copy-make:
+//! slow-ish but dead simple to perft-check. Fast enough for a human-speed engine.
 
 use std::fmt;
 use std::sync::OnceLock;
@@ -119,7 +116,7 @@ impl fmt::Display for Move {
     }
 }
 
-// ---------------------------------------------------------------- Zobrist
+// --- zobrist
 
 struct Zobrist {
     pieces: [[u64; 64]; 16],
@@ -158,7 +155,7 @@ fn zobrist() -> &'static Zobrist {
     })
 }
 
-// ---------------------------------------------------------------- Board
+// --- board
 
 #[derive(Clone, Copy)]
 pub struct Board {
@@ -624,9 +621,8 @@ impl Board {
         self.pseudo_moves(true).into_iter().filter(|&m| self.is_legal_fast(m, check)).collect()
     }
 
-    /// Legality with a shortcut: when not in check, a non-king, non-en-passant
-    /// move can only expose its own king if it starts on a line through the
-    /// king, so every other move is legal without playing it out.
+    /// shortcut: out of check, a non-king non-ep move can only expose the king if it
+    /// starts on a line through it, so everything else is legal without playing it
     #[inline]
     fn is_legal_fast(&self, m: Move, in_check: bool) -> bool {
         let k = self.king[self.side as usize];

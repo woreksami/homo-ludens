@@ -1,7 +1,5 @@
-//! Stages 3-7: intuition, deliberation, evaluation, verification, decision.
-//!
-//! `Mind::think` runs one human "thought process" for one move and returns the
-//! move, the simulated think time and a readable trace of how it got there.
+//! Stages 3-7. `Mind::think` plays one move: returns the move, a fake think time
+//! and the trace of how it got there.
 
 use super::notation::{san, san_line};
 use super::perception::{en_prise, perceive, perceive_replies, Percept, Reason};
@@ -45,8 +43,7 @@ pub struct Mind<'a> {
     pub last_capture_sq: Option<u8>,
     /// Square the opponent's last move went to.
     pub last_to: Option<u8>,
-    /// Care multiplier for this move: players are careful when the game is balanced
-    /// and sloppier once it is decided (scaled error grows with the evaluation).
+    /// How careful we are this move. Balanced game = careful, decided game = sloppy.
     sloppy: f32,
     press: f32,
     searcher: &'a mut Searcher,
@@ -57,17 +54,15 @@ impl<'a> Mind<'a> {
         Mind { persona, rng: Rng::new(seed), seed, nodes: 0, budget: 0, tc_scale: 1.0, clock: None, last_capture_sq: None, last_to: None, sloppy: 1.0, press: 0.0, searcher }
     }
 
-    /// How the position "feels" to this player, from the side to move's view.
-    /// Only known concepts count, and the judgement is noisy but stable for a
-    /// given position (the same player misjudges the same position the same way).
+    /// How the position feels to this player (side to move). Only concepts they know
+    /// count; the noise is fixed per position so they misjudge it the same way twice.
     pub fn feel(&self, b: &Board) -> i32 {
         let bd = eval::breakdown(b);
         let mut w = self.persona.knowledge;
         w[eval::Concept::Material as usize] = 1.0;
         let mut v = bd.weighted(&w);
         let mut r = Rng::new(b.hash ^ self.seed.rotate_left(17));
-        // Heavy-tailed misjudgement: most positions are read about right, a few
-        // are badly misread (same overall variance as a plain gaussian).
+        // fat tails: mostly right, sometimes way off
         let g = r.gauss();
         let scale = if r.f32() < 0.12 { 2.45 } else { 0.62 };
         v += (g * scale * self.persona.eval_noise_cp * self.sloppy) as i32;
@@ -95,8 +90,8 @@ impl<'a> Mind<'a> {
             .join(", ")
     }
 
-    /// Human calculation: alpha-beta over the moves this player would imagine,
-    /// with a stand-pat on their own judgement and working-memory lapses.
+    /// The player's own calc: alpha-beta over moves they'd actually think of,
+    /// stand pat on their own feel, plus memory lapses.
     fn calculate(&mut self, b: &Board, depth: u32, mut alpha: i32, beta: i32, forgotten: &mut Vec<u8>, line: &mut Vec<Move>, ply: i32) -> i32 {
         self.nodes += 1;
         let legal_empty = b.legal_moves().is_empty();
@@ -106,9 +101,7 @@ impl<'a> Mind<'a> {
         let in_check = b.in_check();
         let stand = self.feel(b);
         if depth == 0 || self.nodes >= self.budget {
-            // At the end of a line a player still sees that hanging material can
-            // be taken back ("...Qxd5, exd5"): resolve the best winning capture
-            // they notice, instead of stopping on the opponent's grab.
+            // end of line: still see that a hanging piece can be taken back
             if !in_check {
                 let mut gain = 0;
                 for m in b.legal_captures() {
@@ -128,8 +121,7 @@ impl<'a> Mind<'a> {
             }
             alpha = alpha.max(stand);
         }
-        // In check, a player looks at every way out; otherwise only the replies
-        // that come to mind. Nothing imagined means: trust the feel.
+        // in check you look at everything, otherwise just what comes to mind
         let replies = if in_check { b.legal_moves() } else { perceive_replies(b, &self.persona, &mut self.rng, forgotten) };
         if replies.is_empty() {
             return stand;
@@ -161,8 +153,7 @@ impl<'a> Mind<'a> {
     }
 
     fn sample_candidates(&mut self, b: &Board, percepts: &[Percept], k: usize, first_round: bool) -> Vec<Candidate> {
-        // Intuition: how good each move "looks" at a glance.
-        // How natural each move looks to players of this rating (learned from their games).
+        // how good each move looks at a glance (natural = learned per rating)
         let mv: Vec<Move> = percepts.iter().map(|p| p.mv).collect();
         let nat = super::natural::log_probs(b, &mv, self.last_to, self.persona.elo);
         let nat_w = self.persona.naturalness_cp;
@@ -173,7 +164,7 @@ impl<'a> Mind<'a> {
                 let after = b.make(p.mv);
                 let mut s = -self.feel(&after) as f32 + nat_w * lp;
                 s += p.salience * (self.persona.forcing_attraction + 25.0 * self.press);
-                // "Can it just be taken?" Noticed as often as threats are.
+                // can it just be taken?
                 if let Some(loss) = en_prise(&after, p.mv.to) {
                     if self.rng.chance(self.persona.p_see_threat) {
                         s -= loss as f32;
@@ -190,7 +181,6 @@ impl<'a> Mind<'a> {
             })
             .collect();
 
-        // Sample without replacement, softmax at the persona's temperature.
         let k = k.max(1).min(scored.len());
         let temp = (0.8 * self.persona.intuition_temp * self.sloppy * (1.0 - 0.4 * self.press)).max(1.0);
         let mut chosen = vec![];
@@ -232,19 +222,16 @@ impl<'a> Mind<'a> {
     }
 
     pub fn think(&mut self, b: &Board, limits: &Limits) -> Thought {
-        // Attention lapse: now and then a move is made on autopilot. The player stops
-        // scanning for the opponent's threats and long or backward moves, and calculates
-        // little. That's how club players hang pieces in otherwise decent games.
+        // lapse: autopilot move, no threat scan, barely any calc.
+        // this is how club players hang stuff in decent games
         let p_lapse = env_scale("HL_LAPSE2") * (0.03 * (1.0 - ((self.persona.elo - 1000.0) / 1800.0).clamp(0.0, 1.0))).max(0.012 * env_scale0("HL_TOPLAPSE"));
-        // A club player who is clearly lost stops looking at the board carefully.
         let club = 1.0 - ((self.persona.elo - 1800.0) / 800.0).clamp(0.0, 1.0);
         let lost = ((-self.feel(b) - 350) as f32 / 500.0).clamp(0.0, 1.0);
         let p_lapse = p_lapse + 1.0 * env_scale("HL_GIVEUP") * club * lost;
         let behind = ((-self.feel(b) - 100) as f32 / 500.0).clamp(0.0, 1.0);
         let p_lapse = p_lapse + crate::mind::persona::env_scale0("HL_TOPGIVEUP") * (1.0 - club) * behind;
-        // Strong players blunder where it is sharp or unbalanced and when short of time,
-        // hardly at all in quiet level positions with time in hand (Carlsen blitz: 0.5%
-        // of moves with 90 s+ left vs 3.8% under 15 s; 0.9% at level evals vs 4-5% at +-3).
+        // strong players blunder in sharp/unbalanced spots and in time trouble, almost
+        // never when it's quiet and they have time (carlsen 3+0: 0.5% w/ 90s+ vs 3.8% <15s)
         let unbal = ((self.feel(b).abs() - 100) as f32 / 350.0).clamp(0.0, 1.0);
         let short = match self.clock { Some((rem, inc)) => ((60.0 - (rem + 20.0 * inc)) / 50.0).clamp(0.0, 1.0), None => 0.0 };
         let p_lapse = p_lapse + crate::mind::persona::env_scale0("HL_SHARPLAPSE") * (1.0 - club) * (0.5 * unbal + 0.5 * short);
@@ -277,11 +264,9 @@ impl<'a> Mind<'a> {
         let p = self.persona.clone();
         self.nodes = 0;
         self.budget = p.node_budget;
-        // Time trouble: with little on the clock, players calculate less, and their
-        // concrete checking (stage 6b) shrinks with it.
+        // time trouble -> less calc, less checking
         let mut hurry = 1.0f32;
-        // Time per move: a rapid player calculates more than a bullet player of the
-        // same rating, so effort scales with the time this move can be given.
+        // more time for the move = more calc
         let mut effort = 1.0f32;
         if let Some((rem, inc)) = self.clock {
             let moves_left = (40.0 - 0.6 * b.fullmove as f32).max(15.0);
@@ -306,7 +291,7 @@ impl<'a> Mind<'a> {
             return Thought { best: legal[0], think_ms: ms, trace, candidates: vec![], nodes: 0, resign: false };
         }
 
-        // Stage 0: opening memory. Familiar positions are played from memory, fast.
+        // opening memory, played fast
         if let Some(book) = super::book::get() {
             if let Some((m, seen)) = book.pick(b, p.elo, &mut self.rng) {
                 if legal.contains(&m) {
@@ -318,22 +303,16 @@ impl<'a> Mind<'a> {
             }
         }
 
-        // Stage 1-2: perception.
         let percepts = perceive(b, &p, &mut self.rng);
         self.sloppy = 1.0;
         let feel_now = self.feel(b);
-        // Players defend lost positions worse than they play level ones: once clearly
-        // worse, attention and effort drop and errors grow.
-        // Club players collapse once clearly lost (errors pile up fast); pros hold on.
+        // worse positions get played worse. club players fall apart, pros mostly hold
         let club = 1.0 - ((p.elo - 1800.0) / 800.0).clamp(0.0, 1.0);
         self.sloppy = 1.0 + env_scale("HL_COLLAPSE") * (1.5 + 2.5 * club) * ((-feel_now - 150) as f32 / 750.0).clamp(0.0, 1.0);
-        // ...and a lost club player stops checking and calculating carefully.
         let demoralised = club * ((-feel_now - 300) as f32 / 600.0).clamp(0.0, 1.0);
         self.budget = ((self.budget as f32) * (1.0 - 0.6 * demoralised)) as u32;
-        // ...and smell blood once clearly winning: focused, forcing, going for the king.
-        // Attention comes and goes: most moves are played focused, a few on autopilot
-        // (no checking, little calculation). This gives human errors their shape:
-        // many exact moves, the occasional big lapse, few middling ones.
+        // focused most of the time, autopilot sometimes -> lots of exact moves,
+        // some big misses, not many in between
         let lapse = self.rng.chance(0.01 * env_scale0("HL_LAPSE"));
         if lapse {
             self.sloppy *= 2.5;
@@ -343,7 +322,7 @@ impl<'a> Mind<'a> {
         }
         let demoralised = if lapse { 1.0 } else { demoralised };
         self.press = env_scale("HL_PRESS") * ((feel_now - 300) as f32 / 600.0).clamp(0.0, 1.0);
-        // Clearly winning, a club player calms down and plays cleaner, simpler moves.
+        // clearly winning club player calms down
         self.sloppy *= 1.0 - env_scale0("HL_CALM") * club * self.press.min(1.0);
         let concepts = self.main_concepts(b);
         trace.push(format!(
@@ -358,12 +337,11 @@ impl<'a> Mind<'a> {
             trace.push(format!("  {} catches my eye: {}.", san(b, perc.mv), why.join(", ")));
         }
 
-        // Stage 3: intuition.
         let mut cands = self.sample_candidates(b, &percepts, p.max_candidates, true);
         let names: Vec<String> = cands.iter().map(|c| san(b, c.mv)).collect();
         trace.push(format!("Candidates: {}.", names.join(", ")));
 
-        // Stage 4-5: progressive deepening, first idea favoured (Einstellung).
+        // deepening, first idea gets a bonus
         let mut deepest = 0;
         for depth in 1..=p.calc_depth {
             if self.nodes >= self.budget {
@@ -384,7 +362,7 @@ impl<'a> Mind<'a> {
                 break;
             }
         }
-        // Every idea disappoints: go back and look for something else.
+        // nothing works, look again
         let mut rounds = 0;
         while p.calc_depth > 0
             && rounds < 2
@@ -428,8 +406,7 @@ impl<'a> Mind<'a> {
             }
         }
 
-        // Repetition: a player who stands better avoids repeating; one who stands worse
-        // is happy to. A position seen twice before is simply a draw.
+        // better side avoids repeating, worse side is happy to. threefold = draw
         {
             let hist = self.searcher.game_history();
             let ahead = cands[0].value;
@@ -450,7 +427,6 @@ impl<'a> Mind<'a> {
             }
         }
 
-        // Stage 6a: blunder check.
         let mut chosen = 0;
         if self.rng.chance(p.p_blunder_check * (1.0 - if lapse { 1.0 } else { 0.6 * demoralised })) {
             while chosen < cands.len() {
@@ -469,13 +445,11 @@ impl<'a> Mind<'a> {
             trace.push("I skip the blunder check.".into());
         }
         let mut best = cands[chosen.min(cands.len() - 1)].mv;
-        // Concrete value of the move finally chosen, once checked by search.
         let mut best_val: Option<i32> = None;
 
-        // Stage 6b: verification by real search (strong settings only).
+        // 6b: real search check (strong settings only)
         if p.verify_depth > 0 {
-            // Club players' endgame technique lags their middlegame play: below
-            // master strength, concrete checking is somewhat looser there.
+            // below master level endgame checking is looser
             let eg = ((12 - crate::eval::game_phase(b)) as f32 / 8.0).clamp(0.0, 1.0) * (1.0 - p.engine_weight);
             let depth = ((p.verify_depth as f32) * (1.0 - 0.3 * eg) * hurry).round().max(1.0) as u32;
             let tolerance = p.verify_tolerance_cp * (1.0 + 0.8 * eg) * self.sloppy / (hurry * effort);
@@ -496,7 +470,7 @@ impl<'a> Mind<'a> {
             best_val = scored.iter().find(|x| x.0 == best).map(|x| x.1);
         }
 
-        // Stage 6c: top settings: let a full search challenge the human choice.
+        // 6c: top settings, full search gets a say
         if p.engine_weight > 0.0 {
             let lim = Limits {
                 depth: limits.depth.or(Some((6.0 + 14.0 * p.engine_weight) as u32)),
@@ -504,8 +478,9 @@ impl<'a> Mind<'a> {
                 nodes: limits.nodes,
                 root_moves: None,
             };
-            // With an external oracle configured, it does the deep calculation.
-            let use_oracle = self.rng.chance(env_scale("HL_ORACLE_P"));
+            // external oracle if set. used less when we're worse (people defend badly)
+            let behind_o = ((-feel_now - 100) as f32 / 300.0).clamp(0.0, 1.0);
+            let use_oracle = self.rng.chance(env_scale("HL_ORACLE_P") * (1.0 - env_scale0("HL_ORACLE_DEF") * behind_o));
             let from_oracle = super::oracle::get().filter(|_| use_oracle).and_then(|o| {
                 let mut o = o.lock().ok()?;
                 let fen = b.to_fen();
@@ -531,17 +506,13 @@ impl<'a> Mind<'a> {
                 };
                 (full, my_score, engine_score)
             };
-            // Not afraid of sacrifices that matter: when the deeper look shows that
-            // giving up material really works (a clear gain over the natural move),
-            // a strong player goes for it even where style would otherwise win.
+            // sacs: if the deeper look says it really works, play it even if style says no
             let is_sac = full.best != best && crate::see::see(b, full.best) <= -150;
             let sac_works = is_sac && engine_score >= my_score + (60.0 * env_scale("HL_SACGAIN")) as i32 && engine_score > -100;
             if sac_works {
                 trace.push(format!("The sacrifice {} works; I go for it.", san(b, full.best)));
             }
-            // Among several good moves a strong player's eye often lands on the
-            // objectively best one anyway: sometimes take the engine's move even when
-            // the human choice is within the style margin.
+            // with several good moves, sometimes just take the engine's pick
             let near_pick = engine_score > my_score && self.rng.chance(crate::mind::persona::env_scale0("HL_NEARSWITCH"));
             if ((my_score as f32) < engine_score as f32 - p.style_margin_cp || sac_works || near_pick) && full.best != best {
                 trace.push(format!(
@@ -560,33 +531,26 @@ impl<'a> Mind<'a> {
             }
         }
 
-        // Stage 7: decision and simulated think time.
         let think_ms = self.think_time(b, best, &cands, percepts.len());
         trace.push(format!("Play {} after about {:.1} s.", san(b, best), think_ms as f32 / 1000.0));
-        // Resignation: real Lichess players resign when clearly lost (median
-        // about -12 pawns, a quarter by -8); many play on to mate. Per-move
-        // hazard on how lost the position feels, calibrated on those games.
-        // Judge by the move actually chosen: the first candidate may be a blunder the
-        // check rejected (resigning at -3 because Rc8 hangs a knight, then playing Nge5).
+        // resigning. lichess players resign ~-12 median, lots play on to mate.
+        // use the chosen move's value, not the first candidate (which might be a blunder
+        // the check threw out)
         let hopeless = match best_val {
             Some(v) => (-v.max(-30000)).min(-feel_now + 300),
             None => (-feel_now).min(-cands.iter().find(|c| c.mv == best).unwrap_or(&cands[0]).value.max(-30000) + 300),
         };
-        // About half of club players who are lost never resign that game: they play on
-        // and get mated or flag. A per-game trait (fixed by the game's opening moves and
-        // this side's colour) decides which kind of player this is today.
+        // about half of lost club players never resign. per-game coin flip, seeded
+        // from the opening + colour
         let hist = self.searcher.game_history();
         let game_id = hist.get(10.min(hist.len().saturating_sub(1))).copied().unwrap_or(0) ^ (b.side as u64 * 0x9E37_79B9_7F4A_7C15);
-        // Titled players almost never play on to mate (~10-15% of decided games end
-        // in mate) and resign at a few pawns down, not twelve.
+        // titled players resign a few pawns down, rarely get mated
         let pro = ((self.persona.elo - 1800.0) / 1000.0).clamp(0.0, 1.0);
         let plays_on = (game_id.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) % 100 < (58.0 - 50.0 * pro) as u64;
         let mid = 900.0 - 200.0 * pro;
-        // Club players resign sooner after a decisive loss (human median about -9.5).
             let clubr = 1.0 - pro;
             let hazard = (0.35 + 0.45 * clubr) / (1.0 + (-((hopeless as f32) - (mid - 150.0 * clubr)) / 150.0).exp());
-        // Even stubborn players rarely wait to be mated with a bare king against
-        // a queen or rook: twice as many HL games as human ones went that far.
+        // nobody waits for mate with a bare king vs Q/R
         let has = |c: u8, kinds: &[u8]| b.sq.iter().any(|&x| x != 0 && piece_color(x) == c && kinds.contains(&piece_type(x)));
         let bare = !has(b.side, &[KNIGHT, BISHOP, ROOK, QUEEN]) && has(1 - b.side, &[ROOK, QUEEN]);
         let resign = hopeless > (500.0 - 100.0 * pro) as i32 && ((!plays_on && self.rng.chance(hazard)) || (bare && hopeless > 1200 && self.rng.chance(0.12)));
@@ -600,25 +564,19 @@ impl<'a> Mind<'a> {
         self.calculate(b, depth, -INF, INF, forgotten, line, 1)
     }
 
-    /// Simulated human think time, budgeted the way a strong player uses a clock.
-    ///
-    /// - An ordinary move gets an allotment: time left / moves still to play, plus most of the increment.
-    /// - Obvious moves (recaptures, one candidate far ahead) take a small fraction of that.
-    /// - Critical moves (close candidates, a busy position, the early middlegame) take a few
-    ///   allotments, but never more than about a quarter of the remaining clock.
-    /// - Move times are log-normal around those targets, as real move times are.
-    /// Without a clock, `tc_scale` (1.0 = 5-minute game) sets the allotment.
+    /// Fake human think time.
+    /// normal move: time left / moves to go + most of the inc
+    /// obvious move: small slice of that. critical: a few slices, max ~1/4 of clock
+    /// log-normal around those. no clock -> tc_scale (1.0 = 5+0)
     fn think_time(&mut self, b: &Board, best: Move, cands: &[Candidate], noticed: usize) -> u64 {
         let gap = if cands.len() >= 2 { (cands[0].value - cands[1].value).abs() as f32 } else { 500.0 };
         let move_no = b.fullmove as f32;
         let (allot, remaining) = match self.clock {
             Some((rem, inc)) => {
                 let moves_left = (40.0 - 0.6 * move_no).max(15.0);
-                // Club players budget optimistically and lose many games on time,
-                // especially in bullet; strong players manage the clock better.
+                // club players budget badly and flag a lot, strong ones don't
                 let greed = 1.0 + 0.36 * env_scale("HL_GREED") * ((2200.0 - self.persona.elo) / 1200.0).clamp(0.0, 1.0);
-                // Strong players without increment keep a reserve for the ending:
-                // titled 3+0 players average ~0.7 of base/40 per move and rarely flag.
+                // no inc: titled players keep a reserve (~0.7 of base/40 per move)
                 let greed = if inc <= 0.0 { greed - 0.45 * ((self.persona.elo - 2200.0) / 800.0).clamp(0.0, 1.0) } else { greed };
                 (greed * rem.max(0.0) / moves_left + 0.8 * inc, rem.max(0.0))
             }
@@ -627,41 +585,30 @@ impl<'a> Mind<'a> {
         let recapture = self.last_capture_sq == Some(best.to) && b.sq[best.to as usize] != 0;
         let obvious = recapture || gap >= 300.0 || (gap >= 150.0 && self.rng.chance(0.5));
         let mut secs = if obvious {
-            // Even an obvious move takes a human time to see the opponent's
-            // move, confirm the idea and move the mouse: about a second in
-            // blitz, a bit less in bullet, longer in slow games.
+            // even obvious moves take ~1s to see + move the mouse
             (0.55 + 0.1 * allot) * (0.35 * self.rng.gauss()).exp()
         } else {
             let closeness = (1.0 - gap / 150.0).clamp(0.0, 1.0);
             let complexity = (noticed as f32 / 30.0).min(1.0);
             let phase = 0.6 * (-((move_no - 20.0) / 10.0).powi(2)).exp();
             let criticality = 0.4 + 1.4 * closeness + 0.6 * complexity + phase;
-            // Opening familiarity: even out of book, early positions feel known
-            // and go quickly; time use peaks in the early middlegame.
+            // early positions feel familiar and go fast
             let t = ((move_no - 6.0) / 10.0).clamp(0.0, 1.0);
             let familiar = 0.3 + 0.7 * t * t * (3.0 - 2.0 * t);
-            // Human think times are heavy-tailed (titled blitz: CV ~1.3-1.4 per game);
-            // sigma 0.9 with the mean kept by exp(-(0.9^2 - 0.65^2)/2).
+            // heavy tails (titled blitz CV ~1.3-1.4)
             {
-                // Top blitz players are burstier still (CV ~1.4): widen the spread, keep the mean.
+                // top blitz is burstier
                 let pro = ((self.persona.elo - 2200.0) / 800.0).clamp(0.0, 1.0);
                 let sig = 0.9 + 0.2 * pro * env_scale("HL_TSPREAD");
                 (0.82 * ((0.81 - sig * sig) / 2.0).exp() * allot * criticality * familiar * (sig * self.rng.gauss()).exp()).min(6.0 * allot)
             }
         };
-        // Perception plus motor time: online players rarely move in under ~0.4 s
-        // (premoves aside), except when the clock is nearly gone.
-        // In a scramble a human still needs a few tenths of a second per move,
-        // however little time is left; that is how flags fall.
+        // nobody moves under ~0.4s except premoves / flag scrambles
         let floor = if remaining < 5.0 { 0.25 + 0.25 * self.rng.f32() } else { 0.4 + 0.1 * self.rng.f32() };
         secs = secs.min(0.25 * remaining).max(floor);
-        // Premoves: in fast games an obvious reply (a recapture, the only sensible
-        // move) is often queued before the opponent moves, so it takes a tenth of a
-        // second or so. Top blitz players do this on ~18% of moves, more as the clock
-        // runs down (measured from clocked online games).
+        // premoves on obvious replies, ~18% of moves for top 3+0 players
         if self.clock.is_some() && obvious {
-            // With an increment the clock is rarely tight, so premoves are much rarer
-            // (titled 3+2: ~6% of moves under 0.5 s, vs ~18% at 3+0).
+            // much rarer with increment (~6% at 3+2)
             let inc = self.clock.map_or(0.0, |c| c.1);
             let base_p = (0.75 - 0.06 * allot).clamp(0.05, 0.6) * if inc > 0.0 { 0.4 } else { 1.0 };
             let p_fast = base_p + if remaining < 20.0 { 0.2 } else { 0.0 };
@@ -670,7 +617,7 @@ impl<'a> Mind<'a> {
                 secs = 0.08 + 0.35 * u * u;
             }
         } else if self.clock.map_or(false, |c| c.1 <= 0.0) && gap >= 60.0 && self.rng.chance(0.15 + 0.12 * env_scale("HL_TFAST") * ((self.persona.elo - 2200.0) / 800.0).clamp(0.0, 1.0)) {
-            // Without increment players also bang out moves they half expected.
+            // no inc: bang out moves you half expected
             secs = 0.25 + 0.25 * self.rng.f32();
         }
         (secs.min(600.0) * 1000.0) as u64

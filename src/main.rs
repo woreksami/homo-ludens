@@ -1,10 +1,8 @@
-//! Homo Ludens: a classical chess engine whose reasoning models a human mind.
-//!
-//! Usage:
-//!   homo_ludens                         UCI mode (for GUIs, cutechess, the harness)
-//!   homo_ludens think <elo> [fen]       print one full thought process
-//!   homo_ludens bench [depth]           engine speed and node count
-//!   homo_ludens selfplay <eloA> <eloB> [games]   quick persona-vs-persona match
+//! Homo Ludens. Usage:
+//!   homo_ludens                        UCI
+//!   homo_ludens think <elo> [fen]      one move + trace
+//!   homo_ludens bench [depth]
+//!   homo_ludens selfplay <eloA> <eloB> [games]
 
 use homo_ludens::{board, mind, search, uci};
 

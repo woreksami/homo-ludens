@@ -1,24 +1,17 @@
-"""Head-to-head human move prediction on identical positions.
+"""Who predicts the human move best, on the same positions.
 
-Samples test positions from real games (stratified by rating band so the
-tails are measured too), then asks every model what the human played:
+Positions are stratified by rating band. Models:
+  homo_ludens        human mode at the mover's rating, one move
+  homo_ludens_mode   most common move over N seeds
+  hl_engine          full strength, fixed depth
+  maia_matched       nearest maia-1 net (1100-1900), 1 node
+  maia_1500          maia-1500 for everyone
 
-  homo_ludens   human mode, UCI_Elo set to the mover's rating (one sampled move)
-  homo_ludens_mode   the persona's most frequent move over N seeds
-  hl_engine     the same engine at full strength (fixed depth): "best move" baseline
-  maia_matched  Maia-1 network nearest to the mover's rating (1100..1900), 1 node
-  maia_1500     the single Maia-1500 network for everyone, 1 node
+Engines get the move history, not just a fen (maia looks at the last 8 positions).
+Writes <out>.json, <out>.md and <out>_positions.csv.
 
-Every engine receives the game's move history, not just a FEN, because Maia's
-input includes the previous 8 positions.
-
-Writes <out>.json (summary), <out>.md (tables) and <out>_positions.csv (one
-row per position with every model's move, for later fitting and error
-analysis).
-
-Example:
-  python harness/compare.py --pgn data/lichess_db_standard_rated_2013-01.pgn \\
-      --hl ./target/release/homo_ludens --lc0 ../dl/lc0/build/release/lc0 \\
+  python harness/compare.py --pgn data/lichess_db_standard_rated_2013-01.pgn \
+      --hl ./target/release/homo_ludens --lc0 ../dl/lc0/build/release/lc0 \
       --maia-dir ../dl/maia/maia_weights --per-band 700 --out reports/baseline_v0
 """
 

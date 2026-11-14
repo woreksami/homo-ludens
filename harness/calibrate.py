@@ -1,10 +1,6 @@
-"""Calibrate Homo Ludens's strength dial against real players, move by move.
-
-Samples positions from real games, asks Homo Ludens for a move at several
-UCI_Elo settings, and scores every move (human and bot) with Stockfish.
-Prints, per rating band, the humans' average centipawn loss and blunder
-rate next to Homo Ludens's at each setting, so the setting that plays like
-each band can be read off. Much faster than replaying whole games.
+"""Fit the strength dial move by move. Takes positions from real games, asks HL
+at a few UCI_Elo settings, scores everything with stockfish and prints acpl +
+blunder rate per band next to each setting. Way faster than whole games.
 """
 
 from __future__ import annotations

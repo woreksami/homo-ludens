@@ -1,15 +1,8 @@
-//! WebAssembly API for playing Homo Ludens in a browser.
-//!
-//! Plain C ABI, no bindings generator: the page writes a UTF-8 request into
-//! memory from `hl_alloc`, calls a function, and reads a NUL-terminated
-//! reply. A position request is the start FEN on the first line and the
-//! moves played (UCI) on the second.
-//!
-//! - `hl_position` -> `fen`, `legal` (UCI moves), `san` (same order),
-//!   `check`, `status` (`play`, `checkmate`, `stalemate`, `draw-50`,
-//!   `draw-repetition`, `draw-material`) lines.
-//! - `hl_think(elo, seed, clock_ms, inc_ms)` -> `move`, `think` (simulated
-//!   ms), `resign`, then `trace` lines: the engine's own thoughts.
+//! Wasm api for the browser board. Plain C ABI: the page writes a utf-8 request
+//! into hl_alloc memory, calls in, reads a NUL-terminated reply.
+//! Request = start fen on line 1, uci moves on line 2.
+//!   hl_position -> fen, legal, san, check, status lines
+//!   hl_think(elo, seed, clock_ms, inc_ms) -> move, think, resign, then trace lines
 
 use crate::board::*;
 use crate::mind::{book, notation::san, Mind, Persona};

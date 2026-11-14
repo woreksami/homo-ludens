@@ -1,9 +1,5 @@
-//! Classical alpha-beta search: the engine's verification layer (stage 6).
-//!
-//! Iterative deepening, principal variation search, transposition table,
-//! null-move pruning, late-move reductions, killer and history ordering,
-//! check extension and quiescence. At full strength this is a conventional
-//! engine; the mind layers decide how much of it a persona may use.
+//! Alpha-beta: ID, PVS, TT, null move, LMR, killers/history, check ext, qsearch.
+//! Full strength it is just a normal engine; the mind decides how much a persona gets.
 
 use crate::board::*;
 use crate::eval::{self, PIECE_VALUE};
@@ -129,7 +125,6 @@ impl Searcher {
     fn is_repetition(&self, b: &Board) -> bool {
         let n = self.rep.len();
         let lookback = (b.halfmove as usize).min(n);
-        // Same side to move only: step back two plies at a time.
         let mut i = 2;
         while i <= lookback {
             if self.rep[n - i] == b.hash {
@@ -147,7 +142,7 @@ impl Searcher {
         if b.is_capture(m) {
             let victim = PIECE_VALUE[b.captured_type(m) as usize];
             let attacker = PIECE_VALUE[piece_type(b.sq[m.from as usize]) as usize];
-            // Winning or even exchanges first; losing ones after the quiet killers.
+            // good/equal captures first, losing ones after the killers
             let base = if attacker <= victim || crate::see::see(b, m) >= 0 { 100_000 } else { 60_000 };
             return base + victim * 10 - attacker / 10;
         }
@@ -194,13 +189,13 @@ impl Searcher {
         self.sort_moves(b, &mut moves, Move::NULL, MAX_PLY);
         let mut best = stand;
         for m in moves {
-            // Delta pruning: a capture that cannot raise alpha even with a margin.
+            // delta pruning
             if !in_check && m.promo == 0 {
                 let gain = PIECE_VALUE[b.captured_type(m) as usize];
                 if stand + gain + 200 < alpha {
                     continue;
                 }
-                // Captures that lose material in the exchange are not worth a look.
+                // skip losing captures
                 if PIECE_VALUE[piece_type(b.sq[m.from as usize]) as usize] > gain && crate::see::see(b, m) < 0 {
                     continue;
                 }
@@ -252,12 +247,12 @@ impl Searcher {
 
         let static_eval = if in_check { -INF } else { eval::evaluate(b) };
 
-        // Reverse futility: far above beta at low depth, the opponent will not come back.
+        // reverse futility
         if !pv_node && !in_check && depth <= 6 && !is_mate_score(beta) && static_eval - 85 * depth >= beta {
             return static_eval;
         }
 
-        // Null-move pruning (not in check, not in pawn-only endings).
+        // null move (not in check, not pawn-only)
         if allow_null && !pv_node && !in_check && depth >= 3 && has_non_pawn_material(b) {
             if static_eval >= beta {
                 let r = 3 + depth / 4 + ((static_eval - beta) / 200).min(2);
@@ -284,13 +279,12 @@ impl Searcher {
         for (i, &m) in moves.iter().enumerate() {
             let quiet = !b.is_capture(m) && m.promo == 0;
             let is_killer = ply < MAX_PLY && (m == self.killers[ply][0] || m == self.killers[ply][1]);
-            // Prune quiet moves that cannot matter, once a real move has been searched.
             if quiet && i > 0 && !in_check && !pv_node && !is_mate_score(alpha) && best > -MATE + 1000 {
-                // Late-move pruning: at low depth, late quiet moves are rarely best.
+                // LMP
                 if depth <= 4 && i as i32 >= 3 + depth * depth * 2 {
                     continue;
                 }
-                // Futility: even a good quiet move cannot lift a hopeless eval to alpha.
+                // futility
                 if depth <= 3 && static_eval + 90 + 110 * depth <= alpha && !is_killer {
                     let child = b.make(m);
                     if !child.in_check() {
@@ -307,7 +301,7 @@ impl Searcher {
             if i == 0 {
                 score = -self.negamax(&child, depth - 1, -beta, -alpha, ply + 1, true);
             } else {
-                // Late-move reduction, logarithmic in depth and move number.
+                // LMR
                 let mut r = 0;
                 if depth >= 3 && i >= 2 && quiet && !gives_check {
                     let lr = 0.75 + (depth as f32).ln() * (i as f32).ln() / 2.3;
@@ -350,7 +344,6 @@ impl Searcher {
                         let bonus = depth * depth;
                         let h = &mut self.history[m.from as usize][m.to as usize];
                         *h = (*h + bonus).min(50_000);
-                        // Quiet moves tried before the cutoff did not work here.
                         for &q in quiets_tried.iter().filter(|&&q| q != m) {
                             let h = &mut self.history[q.from as usize][q.to as usize];
                             *h = (*h - bonus).max(-50_000);
@@ -417,7 +410,6 @@ impl Searcher {
 
         let mut scores: Vec<i32> = vec![0; root.len()];
         for depth in 1..=max_depth as i32 {
-            // Order root moves by the previous iteration's scores.
             let mut order: Vec<usize> = (0..root.len()).collect();
             order.sort_by_key(|&i| -scores[i]);
             let ordered: Vec<Move> = order.iter().map(|&i| root[i]).collect();
@@ -425,7 +417,7 @@ impl Searcher {
             root = ordered;
             scores = prev;
 
-            // Aspiration window around the previous score; widen on failure.
+            // aspiration window
             let mut window = if depth >= 5 && !is_mate_score(result.score) { 35 } else { INF };
             let (mut lo, mut hi) = (result.score.saturating_sub(window).max(-INF), result.score.saturating_add(window).min(INF));
             let mut alpha;
@@ -481,7 +473,6 @@ impl Searcher {
             if self.stopped && depth > 1 {
                 break;
             }
-            // Keep the TT pointing at the root's best move for PV extraction.
             self.tt_store(b.hash, depth, score_to_tt(alpha, 0), TT_EXACT, root[best_i]);
             let mut pv = vec![root[best_i]];
             pv.extend(self.extract_pv(&b.make(root[best_i]), depth as usize + 4));
@@ -509,11 +500,8 @@ impl Searcher {
         result
     }
 
-    /// Exact score of each given root move at a fixed depth (side to move's view).
-    /// Used by the mind to check its own candidates.
-    /// Scores each root move by its own iterative deepening up to `depth`, keeping the
-    /// score of the deepest iteration that finished within that move's share of the
-    /// budget (an interrupted iteration's score is meaningless and is discarded).
+    /// Score each root move at a fixed depth (side to move POV), each with its own ID
+    /// within its share of the budget. Half-finished iterations get thrown away.
     pub fn score_moves(&mut self, b: &Board, moves: &[Move], depth: u32, node_budget: Option<u64>, time_ms: Option<u64>) -> Vec<(Move, i32)> {
         let share = node_budget.map(|n| (n / moves.len().max(1) as u64).max(2_000));
         let tshare = time_ms.map(|t| (t / moves.len().max(1) as u64).max(5));

@@ -1,9 +1,6 @@
-"""Quick proxy for the 'several good moves' giveaway, no Stockfish needed.
-
-Takes positions from real games (ply >= 8) whose cached Stockfish MultiPV says at
-least two moves are good (within 5% win chance of the best), asks Homo Ludens for
-a move at the player's rating, and reports how often each picks the engine's top
-move and how often a top-3 move, humans vs Homo Ludens.
+"""Quick check on the 'several good moves' giveaway, no stockfish run needed.
+Positions (ply >= 8) where the cached multipv has 2+ good moves (within 5% win
+chance); how often do humans vs HL pick the top move / a top-3 move.
 """
 import argparse, json, math, random, sys
 from pathlib import Path

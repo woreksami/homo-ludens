@@ -1,20 +1,13 @@
-"""Grade an engine as a model of human play.
+"""Old move-matching benchmark (pre anti-cheat).
 
-For every test position the engine is told the mover's rating (UCI_Elo) and
-asked for a move. We then score:
+Gives the engine each test position with the mover's rating and checks:
+- move match per rating band (the Maia number)
+- spearman between our fake think time and the human's real one
+- optionally, whether best-move rate goes up with rating (maia-2 coherence)
 
-  * move-matching accuracy per rating band (the Maia / Maia-2 headline metric)
-  * think-time fidelity: Spearman correlation between the engine's simulated
-    think time and the human's real think time on the same positions
-  * coherence (optional): does the chance of playing the engine-best move rise
-    monotonically with rating? (Maia-2's monotonicity test, estimated by
-    sampling several seeds per rating)
+Works for any UCI engine, so maia/stockfish run through the same thing.
 
-Any UCI engine can be graded the same way, so baselines (Maia via lc0,
-Stockfish with UCI_Elo) are run through the identical pipeline.
-
-Example:
-  python harness/benchmark.py --engine target/release/homo_ludens \\
+  python harness/benchmark.py --engine target/release/homo_ludens \
       --pgn data/lichess_db_standard_rated_2025-01.pgn --max-positions 5000
 """
 

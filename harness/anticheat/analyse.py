@@ -1,8 +1,5 @@
-"""Analyse every position of every corpus with Stockfish, as Lichess does.
-
-For each position (from ply OPENING_PLIES on) stores Stockfish's top lines
-(MultiPV) with centipawn scores from the side to move's point of view.
-Results are cached in a JSONL keyed by FEN, so re-runs and new corpora only
+"""Stockfish multipv on every position of every corpus (from ply OPENING_PLIES),
+scores from the side to move. Cached in a jsonl keyed by fen so reruns only
 analyse new positions.
 """
 

@@ -1,4 +1,4 @@
-//! The human mind layers (blueprint stages 1-7) on top of the classical core.
+//! The mind layers that sit on top of the engine.
 
 pub mod book;
 pub mod natural;

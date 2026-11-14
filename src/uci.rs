@@ -1,14 +1,6 @@
-//! UCI protocol front end.
-//!
-//! Options:
-//!   UCI_LimitStrength (default true)  human mode on/off
-//!   UCI_Elo 100..3200 (default 1500)  the rating dial
-//!   Seed (default 0 = vary per game)  makes a persona's choices reproducible
-//!   ShowThoughts (default true)       print the thought trace as `info string`
-//!   Hash (MB)
-//!
-//! In human mode every move also prints `info string thinktime <ms>`: the
-//! simulated human think time, which the harness compares with real clocks.
+//! UCI front end. Options: UCI_LimitStrength (human mode), UCI_Elo 100-3200,
+//! Seed, ShowThoughts, SimTimeControl, RawSkill, BookFile, Hash.
+//! Human mode also prints `info string thinktime <ms>` every move.
 
 use crate::board::*;
 use crate::mind::{Mind, Persona};
@@ -94,7 +86,7 @@ impl Engine {
         l.nodes = get("nodes");
         l.movetime_ms = get("movetime");
         let (time, inc) = if self.board.side == WHITE { (get("wtime"), get("winc")) } else { (get("btime"), get("binc")) };
-        // An explicit movetime wins over the clock (the clock then only feeds the simulated human).
+        // explicit movetime beats the clock
         if let (Some(t), None) = (time, l.movetime_ms) {
             let moves_to_go = get("movestogo").unwrap_or(30).max(1);
             l.movetime_ms = Some((t / moves_to_go + inc.unwrap_or(0) * 3 / 4).min(t.saturating_sub(50)).max(10));
@@ -150,7 +142,7 @@ impl Engine {
             "uci_elo" => self.elo = value.parse().unwrap_or(self.elo),
             "seed" => self.seed = value.parse().unwrap_or(0),
             "showthoughts" => self.show_thoughts = value == "true",
-            // "base+inc" in seconds, as in PGN TimeControl: scales simulated think time.
+            // base+inc in seconds like PGN TimeControl
             "simtimecontrol" => {
                 let mut it = value.split('+').map(|x| x.trim().parse::<f32>().unwrap_or(0.0));
                 let (base, inc) = (it.next().unwrap_or(300.0), it.next().unwrap_or(0.0));
@@ -197,13 +189,12 @@ impl Engine {
                     println!("bestmove {}", m.uci());
                 }
                 "d" => println!("{}", self.board),
-                // Non-standard: static evaluation, White's point of view, and its concepts.
+                // custom: static eval + concepts, white POV
                 "eval" => {
                     let bd = crate::eval::breakdown(&self.board);
                     println!("eval {} {:?}", bd.total(), bd.terms);
                 }
-                // Non-standard: score every legal move, for fitting human models.
-                // `evalmoves [depth]` -> `evalmoves e2e4:31 d2d4:28 ...` (side to move's view, cp)
+                // custom: `evalmoves [depth]` -> e2e4:31 d2d4:28 ... (stm POV, cp)
                 "evalmoves" => {
                     let d = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
                     self.searcher.set_game_history(self.history.clone());
@@ -212,8 +203,7 @@ impl Engine {
                     let parts: Vec<String> = scored.iter().map(|(m, s)| format!("{}:{}", m.uci(), s)).collect();
                     println!("evalmoves {}", parts.join(" "));
                 }
-                // Non-standard: dump move-naturalness features for fitting.
-                // `natdump <in> <out>`: input lines `fen<TAB>last_to_square_or_-<TAB>played_uci`.
+                // custom: `natdump <in> <out>`, lines are fen<TAB>last_to|-<TAB>played
                 "natdump" => {
                     use std::io::Write;
                     let text = std::fs::read_to_string(args[1]).unwrap_or_default();
@@ -222,8 +212,7 @@ impl Engine {
                         let f: Vec<&str> = line.split('\t').collect();
                         let Ok(b) = Board::from_fen(f[0]) else { continue };
                         let last = crate::board::parse_sq(f[1]);
-                        // Last column: the move's shallow search score (mover's view), so the fit
-                        // can separate "looks natural" from "is simply good".
+                        // last col = shallow search score so the fit can tell natural from just good
                         let moves = b.legal_moves();
                         self.searcher.set_game_history(vec![]);
                         let scored = self.searcher.score_moves(&b, &moves, 1, Some(50_000), None);

@@ -1,5 +1,4 @@
-//! Homo Ludens as a library: the engine core, the human mind layers, UCI,
-//! and (in the browser build) a small WebAssembly API.
+//! Engine core + mind layers + UCI, and a tiny wasm api for the browser build.
 
 pub mod board;
 pub mod clock;

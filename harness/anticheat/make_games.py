@@ -1,16 +1,13 @@
-"""Build the corpora the anti-cheat grader compares.
+"""Build the corpora the grader compares.
 
-humans  real games sampled from a PGN, both players in the same rating band
-bots    for every human game, each bot replays the same first OPENING_PLIES
-        plies and then plays the rest of the game itself, each side at the
-        rating of the human it replaces. Same openings and ratings, so any
-        difference the detector finds comes from how the moves are chosen.
+humans: real games, both players in the same band.
+bots: for each human game the bot copies the first OPENING_PLIES plies and
+plays the rest itself, each side at the rating of the human it replaces.
+Same openings, same ratings, so whatever the detector finds is move choice.
 
-Bots: homo_ludens (human mode), maia (rating-matched Maia-1 via lc0, 1 node),
-engine (Homo Ludens at full strength, a known non-human control).
-
-Writes one PGN per corpus. Bot games carry each move's simulated think time
-as a [%emt] comment when the engine reports one.
+bots: homo_ludens (human mode), maia (rating-matched maia-1 via lc0, 1 node),
+engine (HL at full strength, the known-bot control).
+Bot moves carry the fake think time as [%emt].
 """
 
 from __future__ import annotations

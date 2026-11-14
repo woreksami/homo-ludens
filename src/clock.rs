@@ -1,5 +1,4 @@
-//! Wall-clock time for search limits. Native builds use `Instant`; the
-//! browser build asks the page for `performance.now()`.
+//! Wall clock. Native = Instant, browser = performance.now() from the page.
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy)]

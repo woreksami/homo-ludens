@@ -1,7 +1,6 @@
-//! Optional external UCI engine ("oracle") for the deep-calculation stage at top
-//! settings. Enabled by HL_ORACLE=<path to engine>; HL_ORACLE_NODES sets the
-//! node budget per query (default 150000). The human layer still chooses; the
-//! oracle only replaces HL's own search where it challenges that choice.
+//! Optional external engine for the deep check at top settings.
+//! HL_ORACLE=<path>, HL_ORACLE_NODES (default 150k). The human layer still picks;
+//! this only replaces our own search where it gets a say.
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Mutex, OnceLock};

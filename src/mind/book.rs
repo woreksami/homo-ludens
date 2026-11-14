@@ -1,8 +1,5 @@
-//! Opening memory: what players of a given rating actually played here.
-//!
-//! Loaded from the TSV `harness/build_book.py` writes. Counts from the
-//! player's own rating band count fully, neighbouring bands less, so a
-//! 1400 player mostly remembers 1400 openings but has heard of others.
+//! Opening memory from harness/build_book.py. Own rating band counts fully,
+//! neighbour bands less: a 1400 mostly remembers 1400 openings.
 
 use crate::board::{Board, Move};
 use crate::mind::persona::Rng;

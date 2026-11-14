@@ -1,9 +1,5 @@
-//! The rating dial. Every cognitive parameter is a smooth function of Elo.
-//!
-//! The numbers here are PRIORS: plausible starting values drawn from the
-//! cognitive literature and coaching experience. Phase P1 replaces them with
-//! values fitted by maximum likelihood on human games (see `harness/`).
-//! Keep every curve monotonic so strength rises smoothly with rating.
+//! The rating dial: every knob is a smooth curve over elo. Keep them monotonic
+//! or strength stops going up with rating.
 
 use crate::eval::N_CONCEPTS;
 
@@ -21,10 +17,8 @@ fn curve(elo: f32, values: [f32; 8]) -> f32 {
     values[7]
 }
 
-/// Measured mapping from a public rating to the internal skill setting that
-/// plays like it (harness/calibrate.py against real Lichess players: average
-/// centipawn loss and blunder rate per rating band). Re-fit after any change
-/// to the thinking stages.
+/// public rating -> internal skill that plays like it (fit with harness/calibrate.py
+/// on lichess acpl + blunder rate per band). refit after touching the think stages
 const CALIB_LABEL: [f32; 7] = [100.0, 600.0, 1000.0, 1500.0, 2000.0, 2500.0, 3200.0];
 const CALIB_INTERNAL: [f32; 7] = [600.0, 1900.0, 2200.0, 2500.0, 2800.0, 3060.0, 3200.0];
 
@@ -63,7 +57,7 @@ pub struct Persona {
     /// Internal (uncalibrated) skill setting the curves were read at.
     pub skill: f32,
 
-    // --- Perception (stage 1)
+    // perception
     /// Chance to notice one of your own capture opportunities.
     pub p_see_capture: f32,
     /// Chance to notice that the opponent threatens one of your pieces.
@@ -75,7 +69,7 @@ pub struct Persona {
     /// Chance to overlook a quiet (non-forcing) opponent reply while calculating.
     pub p_blind_quiet: f32,
 
-    // --- Recognition and intuition (stages 2-3)
+    // recognition and intuition
     /// Shifts how readily patterns are recognised (added to the player's Elo).
     pub pattern_skill: f32,
     pub max_candidates: usize,
@@ -84,7 +78,7 @@ pub struct Persona {
     /// Extra attraction of checks and captures, independent of their value.
     pub forcing_attraction: f32,
 
-    // --- Working memory and deliberation (stage 4)
+    // working memory and deliberation
     pub calc_depth: u32,
     pub opp_replies: usize,
     pub node_budget: u32,
@@ -97,11 +91,11 @@ pub struct Persona {
     /// When every candidate disappoints, chance to go back and look for new ideas.
     pub p_rethink: f32,
 
-    // --- Evaluation (stage 5)
+    // evaluation
     pub knowledge: [f32; N_CONCEPTS],
     pub eval_noise_cp: f32,
 
-    // --- Safety and verification (stage 6)
+    // safety and verification
     pub p_blunder_check: f32,
     /// Alpha-beta depth used to veto unsound candidates (0 = none).
     pub verify_depth: u32,
@@ -145,8 +139,8 @@ impl Persona {
             node_budget: curve(e, [5.0, 25.0, 100.0, 400.0, 2000.0, 8000.0, 20000.0, 50000.0]) as u32,
             p_forget: curve(e, [0.50, 0.35, 0.20, 0.12, 0.06, 0.03, 0.02, 0.0]),
             einstellung_cp: curve(e, [0.0, 20.0, 40.0, 50.0, 40.0, 30.0, 20.0, 5.0]),
-            // Stop calculating once one move is clearly ahead. Strong players need a real
-            // gap before trusting it (a few cp is noise to them), weak players settle sooner.
+            // stop calcing once a move is clearly ahead. strong players need a real gap,
+            // weak ones settle early
             satisfice_cp: curve(e, [300.0, 200.0, 120.0, 100.0, 100.0, 110.0, 130.0, 200.0]),
             p_rethink: curve(e, [0.05, 0.25, 0.55, 0.80, 0.92, 0.97, 0.99, 1.0]),
             knowledge,
@@ -166,8 +160,7 @@ impl Persona {
     }
 }
 
-/// Small deterministic RNG (xorshift64*), so a persona's "mood" is reproducible
-/// for a given position and seed.
+/// tiny xorshift rng so a persona's mood is reproducible per position + seed
 #[derive(Clone)]
 pub struct Rng(u64);
 
@@ -231,7 +224,7 @@ mod tests {
     }
 }
 
-/// Global scale on the naturalness prior (env HL_NAT_SCALE, for experiments; default 1).
+/// env multiplier for experiments, 1 if unset
 pub fn env_scale(name: &str) -> f32 {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -242,7 +235,7 @@ pub fn env_scale(name: &str) -> f32 {
     1.0
 }
 
-/// Like env_scale, but 0 when unset.
+/// same but 0 if unset
 pub fn env_scale0(name: &str) -> f32 {
     #[cfg(not(target_arch = "wasm32"))]
     {

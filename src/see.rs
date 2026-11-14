@@ -1,5 +1,4 @@
-//! Static exchange evaluation: what a capture sequence on one square wins,
-//! if both sides keep recapturing with their least valuable piece.
+//! SEE: what a capture sequence on one square nets with cheapest recaptures.
 
 use crate::board::*;
 use crate::eval::PIECE_VALUE;

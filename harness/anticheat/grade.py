@@ -1,15 +1,12 @@
-"""Anti-cheat grading of bots against real human games.
+"""Grade bots against real human games.
 
-Implements the grader specified in "How Online Chess Anti-Cheat Detects Bots":
+1. lichess's move-quality game flags
+2. regan-style stats per rating band, bot vs human, with z-scores
+3. detectors (logistic + boosted trees) that try to tell bot player-games
+   from human ones at matched ratings/openings. AUC 0.50 = can't tell.
 
-  1. Lichess's open-source game flags (the move-quality ones; tab blurs and
-     holds are browser signals that do not apply, and 2013 human games have no
-     clocks, so time flags are reported for the bot alone).
-  2. Regan/Kramnik-style statistics per rating band, bot vs human, with Z-scores.
-  3. A trained detector: classifiers that try to tell bot player-games from
-     human player-games at matched ratings and openings. AUC 0.50 = chance.
+The detector is only a ruler for how human the play is, see README.
 
-Usage:
   python harness/anticheat/grade.py --dir reports/anticheat --bots homo_ludens maia engine
 """
 

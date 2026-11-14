@@ -1,4 +1,4 @@
-//! Standard algebraic notation, so thought traces read the way players think.
+//! SAN, so traces read like a player would say them.
 
 use crate::board::*;
 

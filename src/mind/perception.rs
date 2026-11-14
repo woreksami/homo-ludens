@@ -1,12 +1,6 @@
-//! Stages 1-2: perception and pattern recognition.
-//!
-//! A human does not "generate all legal moves". Moves come to mind because
-//! something on the board is salient: a capture, a check, a threatened piece,
-//! a familiar pattern. Some legal moves are simply never noticed. This module
-//! decides, for a given persona, which moves enter awareness and why.
-//!
-//! The pattern recognisers here are the hand-written v0 chunk library.
-//! In P1 the learned chunk/template library plugs in through `Pattern`.
+//! Stages 1-2: which moves even come to mind, and why.
+//! People don't generate all legal moves; captures, checks, threats and known
+//! patterns jump out, plenty of legal moves never get noticed.
 
 use super::persona::{Persona, Rng};
 use crate::board::*;
@@ -87,8 +81,8 @@ pub fn least_attacker_value(b: &Board, sq: u8, by: u8) -> Option<i32> {
     best
 }
 
-/// Is the piece on `sq` en prise: attacked and either undefended or attacked by
-/// something cheaper? Returns the material a capture would net, roughly.
+/// Is the piece hanging (attacked and undefended, or attacked by something
+/// cheaper)? Returns roughly what taking it nets.
 pub fn en_prise(b: &Board, sq: u8) -> Option<i32> {
     let p = b.sq[sq as usize];
     if p == 0 || piece_type(p) == KING {
@@ -157,18 +151,16 @@ pub fn attacks_from(b: &Board, s: u8, kind: u8, c: u8) -> Vec<u8> {
     }
 }
 
-// ------------------------------------------------------------ v0 chunk library
+// --- patterns (hand written for now)
 
-/// A recognisable chess pattern. `elo` is the rating at which half of players
-/// reliably recognise it (a prior, to be fitted in P1).
+/// A pattern. `elo` = rating where about half of players spot it.
 pub struct PatternDef {
     pub name: &'static str,
     pub elo: f32,
     pub detect: fn(&Board, Move, &Board) -> Option<i32>,
 }
 
-/// Fork: the moved piece attacks two or more enemy pieces worth more than it,
-/// or the king plus another valuable piece, from a square where it is safe.
+/// Fork: moved piece hits 2+ bigger pieces (or king + something) from a safe square.
 fn detect_fork(b: &Board, m: Move, after: &Board) -> Option<i32> {
     let us = b.side;
     let piece = after.sq[m.to as usize];
@@ -197,8 +189,7 @@ fn detect_fork(b: &Board, m: Move, after: &Board) -> Option<i32> {
     }
 }
 
-/// Pin or skewer: a slider lines up an enemy piece with a more valuable piece
-/// (or the king) behind it.
+/// Pin/skewer: slider lines up an enemy piece with a bigger one (or the king) behind it.
 fn detect_pin_skewer(b: &Board, m: Move, after: &Board) -> Option<i32> {
     let us = b.side;
     let kind = piece_type(after.sq[m.to as usize]);
@@ -235,7 +226,7 @@ fn detect_pin_skewer(b: &Board, m: Move, after: &Board) -> Option<i32> {
     None
 }
 
-/// Back-rank mate idea: a heavy piece checks on the enemy back rank.
+/// Back rank: heavy piece checks on the back rank.
 fn detect_back_rank(b: &Board, m: Move, after: &Board) -> Option<i32> {
     let kind = piece_type(after.sq[m.to as usize]);
     if !matches!(kind, ROOK | QUEEN) || !after.in_check() {
@@ -251,7 +242,7 @@ pub const PATTERNS: [PatternDef; 3] = [
     PatternDef { name: "back-rank attack", elo: 900.0, detect: detect_back_rank },
 ];
 
-// ------------------------------------------------------------ perception
+// --- perception
 
 /// Pieces of the side to move that the opponent threatens, and their value at risk.
 pub fn threatened_pieces(b: &Board) -> Vec<(u8, i32)> {
@@ -323,7 +314,6 @@ pub fn perceive(b: &Board, persona: &Persona, rng: &mut Rng) -> Vec<Percept> {
             reasons.push(Reason::Quiet);
         }
 
-        // Does this move enter awareness at all?
         let forcing = salience >= 1.0;
         let mut p_notice = if forcing {
             if b.is_capture(m) {
@@ -332,7 +322,7 @@ pub fn perceive(b: &Board, persona: &Persona, rng: &mut Rng) -> Vec<Percept> {
                 0.97
             }
         } else {
-            // Quiet moves: weaker players notice fewer of them.
+            // weaker players notice fewer quiet moves
             0.35 + 0.6 * persona.p_see_threat
         };
         if is_backward(b, m) {
@@ -349,7 +339,7 @@ pub fn perceive(b: &Board, persona: &Persona, rng: &mut Rng) -> Vec<Percept> {
         }
     }
 
-    // A player always sees at least one move.
+    // always see at least one move
     if out.is_empty() {
         let legal = b.legal_moves();
         if !legal.is_empty() {
@@ -360,13 +350,13 @@ pub fn perceive(b: &Board, persona: &Persona, rng: &mut Rng) -> Vec<Percept> {
     out
 }
 
-/// The opponent replies this player considers while calculating: forcing
-/// replies first, quiet ones only sometimes, capped at `persona.opp_replies`.
+/// Replies this player imagines when calculating: forcing ones first, quiet ones
+/// sometimes, capped at `persona.opp_replies`.
 pub fn perceive_replies(b: &Board, persona: &Persona, rng: &mut Rng, forgotten_from: &[u8]) -> Vec<Move> {
     let mut scored: Vec<(f32, Move)> = vec![];
     for m in b.legal_moves() {
-        // Working-memory lapse: a piece that moved earlier in this line is not
-        // where the player thinks it is, so its moves are not imagined.
+        // memory lapse: a piece that moved earlier in the line isn't where they think,
+        // so its moves don't get imagined
         if forgotten_from.contains(&m.from) {
             continue;
         }

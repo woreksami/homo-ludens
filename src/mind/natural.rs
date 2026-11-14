@@ -1,9 +1,5 @@
-//! Move "naturalness": which moves human players reach for, learned from their games.
-//!
-//! A conditional-logit model over simple move features (piece, development,
-//! centralisation, recapture, retreat, ...) fitted on real games, with every weight
-//! shifting linearly with rating. Its log-probability is a prior on how natural a
-//! move looks, added to the intuition stage. Weights come from harness/natural/fit.py.
+//! How natural a move looks to players of a rating. Conditional logit over simple
+//! move features, weights drift linearly with elo, fit by harness/natural/fit.py.
 
 use super::perception::{attacks_from, en_prise};
 use crate::board::*;
@@ -141,8 +137,7 @@ pub fn log_probs(b: &Board, moves: &[Move], last_to: Option<u8>, elo: f32) -> Ve
         .iter()
         .map(|&m| {
             let x = features(b, m, last_to);
-            // The check term is left out: the mind's own search already makes checks
-            // attractive, and adding the human habit on top doubles it (too many checks).
+            // no check term: the mind already likes checks, doubling it gave way too many
             (0..NF).filter(|&i| i != 9).map(|i| x[i] * (NAT_W[i] + z * NAT_V[i])).sum()
         })
         .collect();

@@ -1,13 +1,12 @@
-"""Build a rating-banded human opening book from real games.
+"""Opening book by rating band from real games.
 
-For each position in the first --max-ply plies, count which move the human
-to move played, split by that player's rating band. Homo Ludens samples
-from these counts, so its openings follow what players of its rating
-actually play (memory, not calculation).
+For each position in the first --max-ply plies, count what the mover played,
+split by their band. HL samples from these counts so its openings look like
+what people at its rating actually play.
 
-Output: one line per (band, position): `band<TAB>fen4<TAB>uci:count uci:count ...`
-where fen4 is the first four FEN fields. Games listed in --exclude (by Site)
-(matched by site, players, date and round) are left out so the test games never leak into the book.
+Output lines: band<TAB>fen4<TAB>uci:count uci:count ...
+Games in --exclude (matched on site, players, date, round) are left out so
+test games don't leak into the book.
 """
 
 from __future__ import annotations
