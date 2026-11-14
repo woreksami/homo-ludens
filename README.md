@@ -20,6 +20,8 @@ games from human games at the same rating and opening should do no better than
 chance (AUC 0.50). The project's target is AUC below 0.60 at every rating,
 including at the top, where the engine has to play at grandmaster strength.
 
+**Play it:** challenge [HomoLudensBot](https://lichess.org/@/HomoLudensBot) on Lichess. Bullet, blitz or rapid; it plays at whichever of 800, 1200, 1600, 2000, 2400 or 2800 is closest to your rating, and takes human-like time over its moves. How the bot is run: [bot/README.md](bot/README.md).
+
 ## Fair play
 
 Homo Ludens is a research project. It plays openly as a computer, for example
@@ -169,6 +171,7 @@ UCI options:
 | `ShowThoughts` | Sends the trace as `info string` |
 | `SimTimeControl` | Time control, e.g. `180+0`, for the time model |
 | `RawSkill` | Uses the persona at the uncalibrated internal rating, skipping the rating-to-skill map |
+| `RealTime` | Live play: holds each move until the simulated think time has passed (used by the Lichess bot) |
 | `BookFile` | Opening book path |
 | `Hash` | Hash table size |
 

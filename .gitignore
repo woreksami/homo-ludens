@@ -7,3 +7,4 @@ __pycache__/
 /viewer/play/engine.wasm
 /data/masters
 reports/natural/
+/viewer/live.html

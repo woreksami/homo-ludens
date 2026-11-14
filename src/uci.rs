@@ -16,6 +16,8 @@ pub struct Engine {
     pub seed: u64,
     pub show_thoughts: bool,
     pub raw_skill: bool,
+    // live play (lichess etc): search like the evals do, then hold the move until the human think time is up
+    pub real_time: bool,
     pub tc_scale: f32,
     last_capture_sq: Option<u8>,
     last_to: Option<u8>,
@@ -34,6 +36,7 @@ impl Engine {
             seed: 0,
             show_thoughts: true,
             raw_skill: false,
+            real_time: false,
             tc_scale: 1.0,
             last_capture_sq: None,
             last_to: None,
@@ -104,7 +107,15 @@ impl Engine {
     }
 
     pub fn go(&mut self, args: &[&str]) -> Move {
-        let limits = self.limits_from_go(args);
+        #[cfg(not(target_arch = "wasm32"))]
+        let started = std::time::Instant::now();
+        let mut limits = self.limits_from_go(args);
+        if self.real_time && self.human {
+            // same budget the anti-cheat evals were run with (go movetime 500 + clock)
+            let get = |k: &str| args.iter().position(|&a| a == k).and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<u64>().ok());
+            let left = if self.board.side == WHITE { get("wtime") } else { get("btime") };
+            limits.movetime_ms = Some(left.map_or(500, |t| (t / 20).clamp(20, 500)));
+        }
         self.searcher.set_game_history(self.history.clone());
         if !self.human {
             let r = self.searcher.search(&self.board, limits);
@@ -127,6 +138,13 @@ impl Engine {
         println!("info string thinktime {}", t.think_ms);
         if t.resign {
             println!("info string resign");
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.real_time {
+            let wait = std::time::Duration::from_millis(t.think_ms);
+            if let Some(rest) = wait.checked_sub(started.elapsed()) {
+                std::thread::sleep(rest);
+            }
         }
         t.best
     }
@@ -151,6 +169,7 @@ impl Engine {
                 }
             }
             "rawskill" => self.raw_skill = value == "true",
+            "realtime" => self.real_time = value == "true",
             "bookfile" => crate::mind::book::init(&value),
             "hash" => self.searcher = Searcher::new(value.parse().unwrap_or(32)),
             _ => println!("info string unknown option {name}"),
@@ -173,6 +192,7 @@ impl Engine {
                     println!("option name ShowThoughts type check default true");
                     println!("option name SimTimeControl type string default 300+0");
                     println!("option name RawSkill type check default false");
+                    println!("option name RealTime type check default false");
                     println!("option name BookFile type string default data/book.tsv");
                     println!("option name Hash type spin default 32 min 1 max 4096");
                     println!("uciok");
