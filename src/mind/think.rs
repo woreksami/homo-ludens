@@ -505,7 +505,8 @@ impl<'a> Mind<'a> {
                 root_moves: None,
             };
             // With an external oracle configured, it does the deep calculation.
-            let from_oracle = super::oracle::get().and_then(|o| {
+            let use_oracle = self.rng.chance(env_scale("HL_ORACLE_P"));
+            let from_oracle = super::oracle::get().filter(|_| use_oracle).and_then(|o| {
                 let mut o = o.lock().ok()?;
                 let fen = b.to_fen();
                 let (em, es) = o.go(&fen, None)?;
@@ -538,7 +539,11 @@ impl<'a> Mind<'a> {
             if sac_works {
                 trace.push(format!("The sacrifice {} works; I go for it.", san(b, full.best)));
             }
-            if ((my_score as f32) < engine_score as f32 - p.style_margin_cp || sac_works) && full.best != best {
+            // Among several good moves a strong player's eye often lands on the
+            // objectively best one anyway: sometimes take the engine's move even when
+            // the human choice is within the style margin.
+            let near_pick = engine_score > my_score && self.rng.chance(crate::mind::persona::env_scale0("HL_NEARSWITCH"));
+            if ((my_score as f32) < engine_score as f32 - p.style_margin_cp || sac_works || near_pick) && full.best != best {
                 trace.push(format!(
                     "Deeper calculation ({} plies) finds {} ({}) better than {} ({}).",
                     full.depth,
