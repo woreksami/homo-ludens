@@ -18,9 +18,21 @@ games from human games at the same rating and opening should do no better than
 chance (AUC 0.50). The project's target is AUC below 0.60 at every rating,
 including at the top, where the engine has to play at grandmaster strength.
 
-The engine is a research project. It is meant to play openly as a computer
-(for example in chess.com computer tournaments). It is not meant for human-rated
-play.
+## Fair play
+
+Homo Ludens is a research project. It plays openly as a computer, for example
+in chess.com computer tournaments, and is not to be used in human-rated play.
+
+We use the anti-cheat-style detector only as a measuring instrument, to judge
+how closely the engine's play matches human play at a given rating. If the
+detector cannot tell the two apart, the model of human play is accurate. That
+is the research question. We do not mean it as a way to get past any site's
+fair-play checks.
+
+**We explicitly discourage using Homo Ludens to cheat.** Using any engine to
+help you during a game against humans, or letting an engine play under a
+human account, breaks the fair-play rules of chess.com, Lichess and every
+other serious chess platform, and it is unfair to your opponents. Please don't.
 
 ## Status (November 2026)
 
