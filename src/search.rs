@@ -49,6 +49,11 @@ pub struct Searcher {
     tt: Vec<TTEntry>,
     killers: [[Move; 2]; MAX_PLY],
     history: Box<[[i32; 64]; 64]>,
+    // follow-up history: [prev piece][prev to][piece][to]
+    cont: Vec<i32>,
+    moved: [(u8, u8); MAX_PLY + 1],
+    evals: [i32; MAX_PLY + 1],
+    excluded: [Move; MAX_PLY + 1],
     pub nodes: u64,
     start: Instant,
     limits: Limits,
@@ -65,6 +70,10 @@ impl Searcher {
             tt: vec![TTEntry::default(); n.max(1024)],
             killers: [[Move::NULL; 2]; MAX_PLY],
             history: Box::new([[0; 64]; 64]),
+            cont: vec![0; 16 * 64 * 16 * 64],
+            moved: [(0, 0); MAX_PLY + 1],
+            evals: [0; MAX_PLY + 1],
+            excluded: [Move::NULL; MAX_PLY + 1],
             nodes: 0,
             start: Instant::now(),
             limits: Limits::default(),
@@ -79,6 +88,26 @@ impl Searcher {
             *e = TTEntry::default();
         }
         self.history = Box::new([[0; 64]; 64]);
+        self.cont.iter_mut().for_each(|x| *x = 0);
+    }
+
+    #[inline]
+    fn cont_idx(&self, ply: usize, piece: u8, to: u8) -> usize {
+        let (pp, pt) = if ply > 0 && ply <= MAX_PLY { self.moved[ply - 1] } else { (0, 0) };
+        ((pp as usize * 64 + pt as usize) * 16 + piece as usize) * 64 + to as usize
+    }
+
+    #[inline]
+    fn quiet_score(&self, b: &Board, m: Move, ply: usize) -> i32 {
+        self.history[m.from as usize][m.to as usize] + self.cont[self.cont_idx(ply, b.sq[m.from as usize], m.to)]
+    }
+
+    fn bump(&mut self, b: &Board, m: Move, ply: usize, bonus: i32) {
+        let h = &mut self.history[m.from as usize][m.to as usize];
+        *h += bonus - *h * bonus.abs() / 16_384;
+        let i = self.cont_idx(ply, b.sq[m.from as usize], m.to);
+        let c = &mut self.cont[i];
+        *c += bonus - *c * bonus.abs() / 16_384;
     }
 
     /// Positions that occurred before the root (for repetition detection).
@@ -157,7 +186,7 @@ impl Searcher {
                 return 79_000;
             }
         }
-        self.history[m.from as usize][m.to as usize]
+        self.quiet_score(b, m, ply)
     }
 
     fn sort_moves(&self, b: &Board, moves: &mut [Move], tt_move: Move, ply: usize) {
@@ -168,6 +197,12 @@ impl Searcher {
         self.nodes += 1;
         if self.time_up() {
             return 0;
+        }
+        if let Some(e) = self.tt_probe(b.hash) {
+            let s = score_from_tt(e.score, ply);
+            if e.flag == TT_EXACT || (e.flag == TT_LOWER && s >= beta) || (e.flag == TT_UPPER && s <= alpha) {
+                return s;
+            }
         }
         let in_check = b.in_check();
         let stand = if in_check { -MATE + ply as i32 } else { eval::evaluate(b) };
@@ -231,10 +266,12 @@ impl Searcher {
         }
 
         let pv_node = beta - alpha > 1;
+        let excluded = self.excluded[ply];
         let mut tt_move = Move::NULL;
-        if let Some(e) = self.tt_probe(b.hash) {
+        let tt = self.tt_probe(b.hash);
+        if let Some(e) = tt {
             tt_move = e.best;
-            if !pv_node && e.depth as i32 >= depth && ply > 0 {
+            if !pv_node && e.depth as i32 >= depth && ply > 0 && excluded.is_null() {
                 let s = score_from_tt(e.score, ply);
                 match e.flag {
                     TT_EXACT => return s,
@@ -246,17 +283,25 @@ impl Searcher {
         }
 
         let static_eval = if in_check { -INF } else { eval::evaluate(b) };
+        self.evals[ply] = if in_check { if ply >= 2 { self.evals[ply - 2] } else { 0 } } else { static_eval };
+        let improving = !in_check && ply >= 2 && static_eval > self.evals[ply - 2];
 
         // reverse futility
-        if !pv_node && !in_check && depth <= 6 && !is_mate_score(beta) && static_eval - 85 * depth >= beta {
+        if !pv_node && !in_check && excluded.is_null() && depth <= 6 && !is_mate_score(beta) && static_eval - 85 * (depth - improving as i32) >= beta {
             return static_eval;
         }
 
+        // no hash move: this node is probably not worth the full depth
+        if depth >= 4 && tt_move.is_null() && !in_check {
+            depth -= 1;
+        }
+
         // null move (not in check, not pawn-only)
-        if allow_null && !pv_node && !in_check && depth >= 3 && has_non_pawn_material(b) {
+        if allow_null && !pv_node && !in_check && excluded.is_null() && depth >= 3 && has_non_pawn_material(b) {
             if static_eval >= beta {
                 let r = 3 + depth / 4 + ((static_eval - beta) / 200).min(2);
                 self.rep.push(b.hash);
+                self.moved[ply] = (0, 0);
                 let s = -self.negamax(&b.make_null(), depth - 1 - r, -beta, -beta + 1, ply + 1, false);
                 self.rep.pop();
                 if s >= beta && !is_mate_score(s) {
@@ -277,11 +322,18 @@ impl Searcher {
         self.rep.push(b.hash);
         let mut quiets_tried: Vec<Move> = Vec::new();
         for (i, &m) in moves.iter().enumerate() {
+            if m == excluded {
+                continue;
+            }
             let quiet = !b.is_capture(m) && m.promo == 0;
             let is_killer = ply < MAX_PLY && (m == self.killers[ply][0] || m == self.killers[ply][1]);
+            // losing captures near the leaves
+            if !quiet && i > 0 && !in_check && !pv_node && depth <= 4 && m.promo == 0 && best > -MATE + 1000 && crate::see::see(b, m) < -90 * depth {
+                continue;
+            }
             if quiet && i > 0 && !in_check && !pv_node && !is_mate_score(alpha) && best > -MATE + 1000 {
                 // LMP
-                if depth <= 4 && i as i32 >= 3 + depth * depth * 2 {
+                if depth <= 4 && i as i32 >= (3 + depth * depth * 2) / (2 - improving as i32) {
                     continue;
                 }
                 // futility
@@ -292,14 +344,41 @@ impl Searcher {
                     }
                 }
             }
+            // singular extension: is the hash move the only one that holds?
+            let mut ext = 0;
+            if m == tt_move && ply > 0 && depth >= 7 && excluded.is_null() {
+                if let Some(e) = tt {
+                    let ts = score_from_tt(e.score, ply);
+                    if e.depth as i32 >= depth - 3 && e.flag != TT_UPPER && !is_mate_score(ts) {
+                        let sbeta = ts - 2 * depth;
+                        self.excluded[ply] = m;
+                        self.rep.pop();
+                        let s = self.negamax(b, (depth - 1) / 2, sbeta - 1, sbeta, ply, false);
+                        self.rep.push(b.hash);
+                        self.excluded[ply] = Move::NULL;
+                        if self.stopped {
+                            self.rep.pop();
+                            return 0;
+                        }
+                        if s < sbeta {
+                            ext = 1;
+                        } else if sbeta >= beta {
+                            self.rep.pop();
+                            return sbeta;
+                        }
+                    }
+                }
+            }
+            let hist = if quiet { self.quiet_score(b, m, ply) } else { 0 };
             let child = b.make(m);
             let gives_check = child.in_check();
+            self.moved[ply] = (b.sq[m.from as usize], m.to);
             let mut score;
             if quiet {
                 quiets_tried.push(m);
             }
             if i == 0 {
-                score = -self.negamax(&child, depth - 1, -beta, -alpha, ply + 1, true);
+                score = -self.negamax(&child, depth - 1 + ext, -beta, -alpha, ply + 1, true);
             } else {
                 // LMR
                 let mut r = 0;
@@ -315,6 +394,10 @@ impl Searcher {
                     if in_check {
                         r -= 1;
                     }
+                    if !improving {
+                        r += 1;
+                    }
+                    r -= (hist / 6000).clamp(-2, 2);
                     r = r.clamp(0, depth - 2);
                 }
                 score = -self.negamax(&child, depth - 1 - r, -alpha - 1, -alpha, ply + 1, true);
@@ -341,12 +424,11 @@ impl Searcher {
                             self.killers[ply][1] = self.killers[ply][0];
                             self.killers[ply][0] = m;
                         }
-                        let bonus = depth * depth;
-                        let h = &mut self.history[m.from as usize][m.to as usize];
-                        *h = (*h + bonus).min(50_000);
-                        for &q in quiets_tried.iter().filter(|&&q| q != m) {
-                            let h = &mut self.history[q.from as usize][q.to as usize];
-                            *h = (*h - bonus).max(-50_000);
+                        let bonus = (depth * depth * 4).min(1600);
+                        self.bump(b, m, ply, bonus);
+                        let tried = std::mem::take(&mut quiets_tried);
+                        for &q in tried.iter().filter(|&&q| q != m) {
+                            self.bump(b, q, ply, -bonus);
                         }
                     }
                     break;
@@ -354,6 +436,9 @@ impl Searcher {
             }
         }
         self.rep.pop();
+        if !excluded.is_null() {
+            return if best == -INF { alpha } else { best };
+        }
 
         let flag = if best >= beta {
             TT_LOWER
