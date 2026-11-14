@@ -98,6 +98,7 @@ engine:                            # Engine settings.
   uci_options:                     # Arbitrary UCI options passed to the engine.
     UCI_LimitStrength: true        # human mode
     RealTime: true                 # wait out the human think time before moving
+    TimeScale: 60                  # percent of that time to actually wait online
     ShowThoughts: false
     BookFile: "data/book.tsv"
     Hash: 32

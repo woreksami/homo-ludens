@@ -5,7 +5,7 @@ The bot is [lichess-bot](https://github.com/lichess-bot-devs/lichess-bot) (pinne
 How it plays:
 - Each game is played at one of six fixed levels, 800, 1200, 1600, 2000, 2400 or 2800: whichever is closest to the opponent's Lichess rating. To pin one level for every game, set `HL_BOT_ELO`.
 - The time control is passed to HL so it budgets the clock like a human would.
-- Each move is computed with the same budget the anti-cheat evals used (about 0.5 s). The move is then held back until HL's simulated human think time is up, so it never moves instantly.
+- Each move is computed with the same budget the anti-cheat evals used (about 0.5 s). The move is then held back until HL's simulated human think time is up, so it never moves instantly. Online it waits 60% of that time (`TimeScale` in `config.yml`), keeps a reserve on the clock so server lag can't flag it, and plays forced moves at once.
 - Bullet, blitz and rapid; standard chess only; up to 2 games at once.
 
 ## Running it
