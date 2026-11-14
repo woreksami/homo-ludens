@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" alt="Homo Ludens logo" width="220"></p>
+
 # Homo Ludens
 
 Homo Ludens is a classical (non-neural) chess engine whose move choice is a
