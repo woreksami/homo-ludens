@@ -167,6 +167,9 @@ pub struct Board {
     pub fullmove: u16,
     pub king: [u8; 2],
     pub hash: u64,
+    // bitboard per piece code, kept in sync with `sq` (bb[0] unused)
+    pub bb: [u64; 16],
+    pub occ: u64,
 }
 
 const KNIGHT_D: [(i8, i8); 8] = [(1, 2), (2, 1), (2, -1), (1, -2), (-1, -2), (-2, -1), (-2, 1), (-1, 2)];
@@ -179,6 +182,92 @@ fn step_table(d: &[(i8, i8); 8]) -> [Vec<u8>; 64] {
         let (f, r) = (file_of(s as u8), rank_of(s as u8));
         d.iter().filter_map(|&(df, dr)| sq_at(f + df, r + dr)).collect()
     })
+}
+
+// rook dirs first, then bishop dirs (same order as ROOK_D / BISHOP_D)
+const RAY_DIRS: [(i8, i8); 8] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)];
+const RAY_UP: [bool; 8] = [true, false, true, false, true, false, true, false];
+
+struct Tables {
+    knight: [u64; 64],
+    king: [u64; 64],
+    // squares a pawn of that colour attacks `sq` from
+    pawn_from: [[u64; 64]; 2],
+    rays: [[u64; 64]; 8],
+}
+
+const fn step_mask(s: usize, d: &[(i8, i8)]) -> u64 {
+    let (f, r) = ((s & 7) as i8, (s >> 3) as i8);
+    let mut m = 0u64;
+    let mut i = 0;
+    while i < d.len() {
+        let (ff, rr) = (f + d[i].0, r + d[i].1);
+        if ff >= 0 && ff < 8 && rr >= 0 && rr < 8 {
+            m |= 1 << (rr * 8 + ff);
+        }
+        i += 1;
+    }
+    m
+}
+
+const fn ray_bits(s: usize, df: i8, dr: i8) -> u64 {
+    let (mut f, mut r) = ((s & 7) as i8 + df, (s >> 3) as i8 + dr);
+    let mut m = 0u64;
+    while f >= 0 && f < 8 && r >= 0 && r < 8 {
+        m |= 1 << (r * 8 + f);
+        f += df;
+        r += dr;
+    }
+    m
+}
+
+const fn build_tables() -> Tables {
+    let mut t = Tables { knight: [0; 64], king: [0; 64], pawn_from: [[0; 64]; 2], rays: [[0; 64]; 8] };
+    let mut s = 0;
+    while s < 64 {
+        t.knight[s] = step_mask(s, &KNIGHT_D);
+        t.king[s] = step_mask(s, &KING_D);
+        t.pawn_from[0][s] = step_mask(s, &[(-1, -1), (1, -1)]);
+        t.pawn_from[1][s] = step_mask(s, &[(-1, 1), (1, 1)]);
+        let mut d = 0;
+        while d < 8 {
+            t.rays[d][s] = ray_bits(s, RAY_DIRS[d].0, RAY_DIRS[d].1);
+            d += 1;
+        }
+        s += 1;
+    }
+    t
+}
+
+static TABLES: Tables = build_tables();
+
+#[inline]
+fn tables() -> &'static Tables {
+    &TABLES
+}
+
+pub fn ray_mask(d: usize, s: u8) -> u64 {
+    tables().rays[d][s as usize]
+}
+
+/// Nearest occupied square from `s` in direction `d` (index into ROOK_D then BISHOP_D), if any.
+#[inline]
+pub fn first_hit(d: usize, s: u8, occ: u64) -> Option<u8> {
+    let hit = tables().rays[d][s as usize] & occ;
+    if hit == 0 {
+        None
+    } else {
+        Some(if RAY_UP[d] { hit.trailing_zeros() } else { 63 - hit.leading_zeros() } as u8)
+    }
+}
+
+pub fn knight_mask(s: u8) -> u64 {
+    tables().knight[s as usize]
+}
+
+/// Squares a pawn of colour `c` on `s` attacks.
+pub fn pawn_attacks(c: u8, s: u8) -> u64 {
+    tables().pawn_from[(c ^ 1) as usize][s as usize]
 }
 
 pub fn knight_targets(sq: u8) -> &'static [u8] {
@@ -220,6 +309,8 @@ impl Board {
             fullmove: 1,
             king: [NO_SQ; 2],
             hash: 0,
+            bb: [0; 16],
+            occ: 0,
         };
         let mut rank: i8 = 7;
         let mut file: i8 = 0;
@@ -242,7 +333,7 @@ impl Board {
                         _ => return Err(format!("bad piece '{c}' in FEN")),
                     };
                     let s = sq_at(file, rank).ok_or("FEN square out of range")?;
-                    b.sq[s as usize] = make_piece(color, kind);
+                    b.put(s, make_piece(color, kind));
                     if kind == KING {
                         b.king[color as usize] = s;
                     }
@@ -340,50 +431,49 @@ impl Board {
     }
 
     /// Is `sq` attacked by any piece of color `by`?
+    #[inline]
+    fn put(&mut self, s: u8, p: u8) {
+        let bit = 1u64 << s;
+        let old = self.sq[s as usize];
+        self.bb[old as usize] &= !bit;
+        self.bb[p as usize] |= bit;
+        self.sq[s as usize] = p;
+        if p == 0 { self.occ &= !bit } else { self.occ |= bit }
+    }
+
+    /// Is `sq` attacked by any piece of color `by`?
     pub fn attacked(&self, sq: u8, by: u8) -> bool {
-        let (f, r) = (file_of(sq), rank_of(sq));
-        // Pawns: a pawn of color `by` attacks sq from one rank "behind" it.
-        let pr = if by == WHITE { r - 1 } else { r + 1 };
-        for df in [-1, 1] {
-            if let Some(s) = sq_at(f + df, pr) {
-                if self.sq[s as usize] == make_piece(by, PAWN) {
-                    return true;
-                }
-            }
+        let t = tables();
+        let s = sq as usize;
+        let pc = |k| self.bb[make_piece(by, k) as usize];
+        if t.pawn_from[by as usize][s] & pc(PAWN) != 0 || t.knight[s] & pc(KNIGHT) != 0 || t.king[s] & pc(KING) != 0 {
+            return true;
         }
-        for &s in knight_targets(sq) {
-            if self.sq[s as usize] == make_piece(by, KNIGHT) {
+        let q = pc(QUEEN);
+        let diag = pc(BISHOP) | q;
+        let line = pc(ROOK) | q;
+        for d in 0..8 {
+            let want = if d < 4 { line } else { diag };
+            let r = t.rays[d][s];
+            if r & want == 0 {
+                continue;
+            }
+            let hit = r & self.occ;
+            // first piece along the ray: lowest bit going up the board, highest going down
+            let first = if RAY_UP[d] { hit.trailing_zeros() } else { 63 - hit.leading_zeros() };
+            if want >> first & 1 != 0 {
                 return true;
-            }
-        }
-        for &s in king_targets(sq) {
-            if self.sq[s as usize] == make_piece(by, KING) {
-                return true;
-            }
-        }
-        for &(df, dr) in BISHOP_D.iter() {
-            for s in ray(sq, df, dr) {
-                let p = self.sq[s as usize];
-                if p != 0 {
-                    if piece_color(p) == by && matches!(piece_type(p), BISHOP | QUEEN) {
-                        return true;
-                    }
-                    break;
-                }
-            }
-        }
-        for &(df, dr) in ROOK_D.iter() {
-            for s in ray(sq, df, dr) {
-                let p = self.sq[s as usize];
-                if p != 0 {
-                    if piece_color(p) == by && matches!(piece_type(p), ROOK | QUEEN) {
-                        return true;
-                    }
-                    break;
-                }
             }
         }
         false
+    }
+
+    pub fn pieces(&self, c: u8, kind: u8) -> u64 {
+        self.bb[make_piece(c, kind) as usize]
+    }
+
+    pub fn color_mask(&self, c: u8) -> u64 {
+        (PAWN..=KING).fold(0, |m, k| m | self.pieces(c, k))
     }
 
     pub fn in_check(&self) -> bool {
@@ -529,8 +619,8 @@ impl Board {
         let placed = if m.promo != 0 { make_piece(us, m.promo) } else { piece };
         let mut h = self.hash;
 
-        b.sq[m.from as usize] = 0;
-        b.sq[m.to as usize] = placed;
+        b.put(m.from, 0);
+        b.put(m.to, placed);
         if with_hash {
             h ^= z.pieces[piece as usize][m.from as usize] ^ z.pieces[placed as usize][m.to as usize];
             if captured != 0 {
@@ -544,7 +634,7 @@ impl Board {
                 if with_hash {
                     h ^= z.pieces[b.sq[cap_sq as usize] as usize][cap_sq as usize];
                 }
-                b.sq[cap_sq as usize] = 0;
+                b.put(cap_sq, 0);
             }
             FLAG_CASTLE => {
                 let (rf, rt) = if m.to > m.from { (m.from + 3, m.from + 1) } else { (m.from - 4, m.from - 1) };
@@ -552,8 +642,8 @@ impl Board {
                 if with_hash {
                     h ^= z.pieces[rook as usize][rf as usize] ^ z.pieces[rook as usize][rt as usize];
                 }
-                b.sq[rt as usize] = rook;
-                b.sq[rf as usize] = 0;
+                b.put(rt, rook);
+                b.put(rf, 0);
             }
             _ => {}
         }

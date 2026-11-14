@@ -57,7 +57,7 @@ impl<'a> Mind<'a> {
     /// How the position feels to this player (side to move). Only concepts they know
     /// count; the noise is fixed per position so they misjudge it the same way twice.
     pub fn feel(&self, b: &Board) -> i32 {
-        let bd = eval::breakdown(b);
+        let bd = eval::cached_breakdown(b);
         let mut w = self.persona.knowledge;
         w[eval::Concept::Material as usize] = 1.0;
         let mut v = bd.weighted(&w);
@@ -75,7 +75,7 @@ impl<'a> Mind<'a> {
 
     /// Which concepts dominated the player's judgement of a position (for the trace).
     fn main_concepts(&self, b: &Board) -> String {
-        let bd = eval::breakdown(b);
+        let bd = eval::cached_breakdown(b);
         let mut items: Vec<(usize, f32)> = (0..N_CONCEPTS)
             .map(|i| (i, bd.terms[i] as f32 * if i == 0 { 1.0 } else { self.persona.knowledge[i] }))
             .filter(|(_, v)| v.abs() >= 15.0)

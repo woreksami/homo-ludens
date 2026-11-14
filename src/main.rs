@@ -25,6 +25,19 @@ fn main() {
                 println!("{line}");
             }
         }
+        Some("regress") => {
+            // same seeds + node limits, so a speedup can be checked move for move
+            let fens = std::fs::read_to_string(&args[2]).expect("fen file");
+            for (i, fen) in fens.lines().filter(|l| !l.is_empty()).enumerate() {
+                let b = Board::from_fen(fen).expect("valid FEN");
+                for elo in [600.0, 1200.0, 1800.0, 2400.0, 2900.0] {
+                    let mut s = Searcher::new(16);
+                    let mut m = Mind::new(Persona::from_elo(elo), 7 ^ b.hash ^ i as u64, &mut s);
+                    let t = m.think(&b, &Limits { nodes: Some(150_000), ..Default::default() });
+                    println!("{i} {elo} {} {} {}", t.best, t.think_ms, t.resign);
+                }
+            }
+        }
         Some("bench") => bench(args.get(2).and_then(|s| s.parse().ok()).unwrap_or(9)),
         Some("selfplay") => {
             let a: f32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(800.0);
