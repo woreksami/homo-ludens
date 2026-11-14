@@ -10,6 +10,8 @@ How it plays:
 
 ## Deploy on fly.io
 
+Quickest: run `bot/deploy.sh` from the repo root. It logs you in to fly, creates the app, asks for the token (hidden), checks it with Lichess and deploys. The manual steps are below.
+
 You need a fly.io account, [flyctl](https://fly.io/docs/flyctl/install/) and a Lichess API token for the bot account with the `bot:play` scope (create it at https://lichess.org/account/oauth/token/create while logged in as the bot).
 
 ```bash
