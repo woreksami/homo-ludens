@@ -155,8 +155,16 @@ impl<'a> Mind<'a> {
     fn sample_candidates(&mut self, b: &Board, percepts: &[Percept], k: usize, first_round: bool) -> Vec<Candidate> {
         // how good each move looks at a glance (natural = learned per rating)
         let mv: Vec<Move> = percepts.iter().map(|p| p.mv).collect();
-        let nat = super::natural::log_probs(b, &mv, self.last_to, self.persona.elo);
-        let nat_w = self.persona.naturalness_cp;
+        let mut nat = super::natural::log_probs(b, &mv, self.last_to, self.persona.elo);
+        let mut nat_w = self.persona.naturalness_cp;
+        // with maia plugged in, its policy is the gut feeling instead
+        if super::maia::enabled() {
+            let ucis: Vec<String> = mv.iter().map(|m| m.uci()).collect();
+            if let Some(p) = super::maia::probs(&b.to_fen(), &ucis, self.persona.elo) {
+                nat = p.iter().map(|&x| x.max(1e-4).ln()).collect();
+                nat_w *= env_scale("HL_MAIA_W");
+            }
+        }
         let mut scored: Vec<(f32, &Percept)> = percepts
             .iter()
             .zip(nat.iter())
@@ -256,6 +264,25 @@ impl<'a> Mind<'a> {
             t.trace.push("(I wasn't really concentrating on that one.)".into());
             return t;
         }
+        // hope chess: once clearly worse people stop defending properly. they go for
+        // forcing, trappy moves, see fewer of the opponent's ideas and check less
+        let hope = crate::mind::persona::env_scale0("HL_HOPE") * ((-self.feel(b) - 100) as f32 / 300.0).clamp(0.0, 1.0);
+        if hope > 0.0 {
+            let saved = self.persona.clone();
+            let q = &saved;
+            self.persona = Persona {
+                forcing_attraction: q.forcing_attraction + 60.0 * hope,
+                p_see_threat: q.p_see_threat * (1.0 - 0.4 * hope),
+                p_blind_quiet: (q.p_blind_quiet + 0.3 * hope).min(0.9),
+                p_blunder_check: q.p_blunder_check * (1.0 - 0.5 * hope),
+                verify_tolerance_cp: q.verify_tolerance_cp * (1.0 + hope),
+                style_margin_cp: q.style_margin_cp + 40.0 * hope,
+                ..saved.clone()
+            };
+            let t = self.think_inner(b, limits);
+            self.persona = saved;
+            return t;
+        }
         self.think_inner(b, limits)
     }
 
@@ -303,7 +330,19 @@ impl<'a> Mind<'a> {
             }
         }
 
-        let percepts = perceive(b, &p, &mut self.rng);
+        let mut percepts = perceive(b, &p, &mut self.rng);
+        // the moves maia is fairly sure about are the ones a human "just sees"
+        if super::maia::enabled() {
+            let legal = b.legal_moves();
+            let ucis: Vec<String> = legal.iter().map(|m| m.uci()).collect();
+            if let Some(ps) = super::maia::probs(&b.to_fen(), &ucis, p.elo) {
+                for (m, &pr) in legal.iter().zip(ps.iter()) {
+                    if pr >= 0.25 && !percepts.iter().any(|x| x.mv == *m) {
+                        percepts.push(Percept { mv: *m, salience: 0.0, reasons: vec![Reason::Quiet] });
+                    }
+                }
+            }
+        }
         self.sloppy = 1.0;
         let feel_now = self.feel(b);
         // worse positions get played worse. club players fall apart, pros mostly hold

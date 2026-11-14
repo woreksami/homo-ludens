@@ -112,7 +112,10 @@ pub struct Persona {
 impl Persona {
     pub fn from_elo(elo: f32) -> Persona {
         let label = elo.clamp(100.0, 3200.0);
-        Self::from_internal(calibrated(label), label)
+        // maia's intuition is better than ours, so with it plugged in the same label
+        // needs a lower internal skill to play like that rating
+        let shift = if crate::mind::maia::enabled() { env_scale0("HL_MAIA_SHIFT") } else { 0.0 };
+        Self::from_internal(calibrated(label) - shift, label)
     }
 
     /// Persona at an uncalibrated internal skill setting, reporting `label` as its rating.
