@@ -1,6 +1,6 @@
 #!/bin/bash
 # usage: eval_both.sh <version> <prev-version-for-cache>   (env vars pass through to HL)
-V=$1; PREV=$2; cd /home/claude/homo_ludens
+V=$1; PREV=$2; cd "$(dirname "$0")/.."
 for set in ${SETS:-k old}; do
   if [ $set = k ]; then D=reports/k_$V; P=data/kaggle/lichess_2017.pgn; B=1000,1200,1400,1600,1800,2000,2200; N=70; C=reports/k_$PREV/analysis_50000.jsonl
   elif [ $set = t ]; then D=reports/t_$V; P=data/tt/tt2019.pgn; B=2200,2400,2600,2800; N=50; C=reports/t_$PREV/analysis_50000.jsonl
